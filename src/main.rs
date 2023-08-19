@@ -8,6 +8,7 @@ use russh_keys::key;
 use serde::{Deserialize, Serialize};
 use tokio::{
     io::{self, AsyncBufReadExt, AsyncWriteExt, BufReader},
+    spawn,
     sync::mpsc,
 };
 
@@ -70,10 +71,10 @@ async fn main() -> Result<()> {
         .build()?
         .try_deserialize()?;
 
-    let (tx, mut rx) = mpsc::channel(5);
+    let (tx_out, mut rx_out) = mpsc::channel(5);
 
     let config = Arc::new(client::Config::default());
-    let sh = Client(tx);
+    let sh = Client(tx_out);
     let mut session = client::connect(config, (&settings.ip[..], settings.port), sh).await?;
     let authenticated = session
         .authenticate_password(&settings.username, &settings.password)
@@ -85,21 +86,33 @@ async fn main() -> Result<()> {
 
     let mut channel = session.channel_open_session().await?;
     channel.request_shell(true).await?;
-    if let Some(data) = rx.recv().await {
         let mut stdout = io::stdout();
+    if let Some(data) = rx_out.recv().await {
         stdout.write_all(&data).await?;
         stdout.write_all(b"$ ").await?;
         stdout.flush().await?;
     }
 
-    loop {
+    let (tx_in, mut rx_in) = mpsc::channel(5);
+
+    spawn(async move {
         let mut stdin = BufReader::new(io::stdin());
-        let mut stdout = io::stdout();
-        let mut cmd = String::new();
+        loop {
+            let mut input = String::new();
+            if let Err(e) = stdin.read_line(&mut input).await {
+                eprintln!("{}", e);
+            }
+            if let Err(e) = tx_in.send(input).await {
+                eprintln!("{}", e);
+            }
+        }
+    });
 
-        stdin.read_line(&mut cmd).await?;
-
-        let cmd: Command = cmd.parse()?;
+    loop {
+        let Some(cmd) = dbg!(rx_in.recv().await) else {
+            continue;
+        };
+        let cmd: Command = dbg!(cmd.parse()?);
 
         match cmd {
             Command::Exit => break,
@@ -107,7 +120,7 @@ async fn main() -> Result<()> {
             Command::Remote(cmd) => {
                 channel.data(cmd.as_bytes()).await?;
 
-                if let Some(data) = rx.recv().await {
+                if let Some(data) = rx_out.recv().await {
                     stdout.write_all(&data).await?;
                     stdout.write_all(b"$ ").await?;
                     stdout.flush().await?;
