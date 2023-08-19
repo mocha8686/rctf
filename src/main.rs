@@ -109,10 +109,10 @@ async fn main() -> Result<()> {
     });
 
     loop {
-        let Some(cmd) = dbg!(rx_in.recv().await) else {
+        let Some(cmd) = rx_in.recv().await else {
             continue;
         };
-        let cmd: Command = dbg!(cmd.parse()?);
+        let cmd: Command = cmd.parse()?;
 
         match cmd {
             Command::Exit => break,
