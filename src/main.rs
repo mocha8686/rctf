@@ -122,11 +122,12 @@ async fn main() -> Result<()> {
 
                 if let Some(data) = rx_out.recv().await {
                     stdout.write_all(&data).await?;
-                    stdout.write_all(b"$ ").await?;
-                    stdout.flush().await?;
                 }
             }
         }
+
+        stdout.write_all(b"$ ").await?;
+        stdout.flush().await?;
     }
 
     Ok(())
