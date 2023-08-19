@@ -84,9 +84,9 @@ async fn main() -> Result<()> {
         bail!("Failed to authenticate.");
     }
 
+    let mut stdout = io::stdout();
     let mut channel = session.channel_open_session().await?;
     channel.request_shell(true).await?;
-        let mut stdout = io::stdout();
     if let Some(data) = rx_out.recv().await {
         stdout.write_all(&data).await?;
         stdout.write_all(b"$ ").await?;
