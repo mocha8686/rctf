@@ -7,5 +7,10 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.75"
-ssh2 = "^0.9"
+async-trait = "0.1.73"
+clearscreen = "2.0.1"
+config = "0.13.3"
+russh = "0.38.0"
+russh-keys = "0.38.0"
+serde = { version = "1.0.183", features = ["derive"] }
 tokio = { version = "1.32.0", features = ["full"] }
