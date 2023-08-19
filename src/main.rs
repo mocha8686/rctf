@@ -11,7 +11,7 @@ use tokio::{
     sync::mpsc,
 };
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct Settings {
     ip: String,
     port: u16,
@@ -19,6 +19,7 @@ struct Settings {
     password: String,
 }
 
+#[derive(Clone, Debug)]
 enum Command {
     Exit,
     Clear,
