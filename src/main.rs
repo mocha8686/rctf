@@ -33,7 +33,7 @@ impl FromStr for Command {
         match s.trim() {
             "exit" => Ok(Self::Exit),
             "clear" => Ok(Self::Clear),
-            s => Ok(Self::Remote(s.to_string())),
+            s => Ok(Self::Remote(format!("{}\n", s))),
         }
     }
 }
