@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use config::Config;
 use crossterm::{
     cursor,
-    event::{self, Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
+    event::{self, Event, EventStream, KeyCode, KeyEventKind, KeyModifiers},
     execute, queue, style,
     terminal::{self, disable_raw_mode, enable_raw_mode},
 };
@@ -13,7 +13,7 @@ use futures::StreamExt;
 use russh::{client, ChannelId};
 use russh_keys::key;
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
+use tokio::{select, sync::mpsc};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Settings {
@@ -66,27 +66,10 @@ impl client::Handler for Client {
     }
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    let settings: Settings = Config::builder()
-        .add_source(config::Environment::with_prefix("RCTF"))
-        .add_source(config::File::with_name("./rctf.ini"))
-        .build()?
-        .try_deserialize()?;
-
-    let (tx_out, _) = mpsc::channel(5);
-
-    let config = Arc::new(client::Config::default());
-    let sh = Client(tx_out);
-    let mut session = client::connect(config, (&settings.ip[..], settings.port), sh).await?;
-    let authenticated = session
-        .authenticate_password(&settings.username, &settings.password)
-        .await?;
-
-    if !authenticated {
-        bail!("Failed to authenticate.");
-    }
-
+async fn start_terminal(
+    tx_stdin: mpsc::Sender<String>,
+    mut rx_stdout: mpsc::Receiver<Box<[u8]>>,
+) -> Result<()> {
     let mut stdout = io::stdout();
 
     if let Ok(true) = terminal::supports_keyboard_enhancement() {
@@ -104,8 +87,6 @@ async fn main() -> Result<()> {
         stdout,
         terminal::Clear(terminal::ClearType::All),
         cursor::MoveTo(0, 0),
-        style::Print("Hello, world!"),
-        cursor::MoveToNextLine(1),
         cursor::SavePosition,
         cursor::MoveTo(0, rows),
         style::Print("$ "),
@@ -114,111 +95,129 @@ async fn main() -> Result<()> {
     let mut reader = EventStream::new();
     let mut cmd = String::new();
     loop {
-        let event = reader.next().await;
-
-        match event {
-            Some(Ok(event)) => {
-                // println!("Event::{:?}\r", event);
+        select! {
+            event = reader.next() => {
                 match event {
-                    Event::Key(KeyEvent {
-                        code: KeyCode::Esc,
-                        kind: KeyEventKind::Press,
-                        modifiers: _,
-                        state: _,
-                    })
-                    | Event::Key(KeyEvent {
-                        code: KeyCode::Char('c'),
-                        kind: KeyEventKind::Press,
-                        modifiers: KeyModifiers::CONTROL,
-                        state: _,
-                    }) => break,
-                    Event::Key(KeyEvent {
-                        code: KeyCode::Backspace,
-                        kind: KeyEventKind::Press | KeyEventKind::Repeat,
-                        modifiers: _,
-                        state: _,
-                    }) => {
-                        if cmd.is_empty() {
-                            continue;
-                        }
+                    Some(Ok(Event::Key(e))) => {
+                        match (e.code, e.kind, e.modifiers) {
+                            (KeyCode::Esc, KeyEventKind::Press, _) | (KeyCode::Char('c'), KeyEventKind::Press, KeyModifiers::CONTROL) => break,
+                            (KeyCode::Backspace, KeyEventKind::Press | KeyEventKind::Repeat, _) => {
+                                if cmd.is_empty() {
+                                    continue;
+                                }
+                                cmd.pop();
+                                execute!(
+                                    stdout,
+                                    cursor::MoveLeft(1),
+                                    terminal::Clear(terminal::ClearType::UntilNewLine),
+                                )?;
+                            }
+                            (KeyCode::Enter, KeyEventKind::Press | KeyEventKind::Repeat, _) => {
+                                execute!(
+                                    stdout,
+                                    cursor::RestorePosition,
+                                    style::Print(format!("$ {}", cmd)),
+                                    cursor::MoveToNextLine(1),
+                                    cursor::SavePosition,
+                                    cursor::MoveTo(2, rows),
+                                    terminal::Clear(terminal::ClearType::UntilNewLine),
+                                )?;
 
-                        cmd.pop();
-                        execute!(
-                            stdout,
-                            cursor::MoveLeft(1),
-                            terminal::Clear(terminal::ClearType::UntilNewLine),
-                        )?;
+                                {
+                                    let cmd: Command = cmd.parse()?;
+                                    match cmd {
+                                        Command::Exit => break,
+                                        Command::Clear => execute!(stdout, terminal::Clear(terminal::ClearType::FromCursorUp))?,
+                                        Command::Remote(cmd) => tx_stdin.send(cmd).await?,
+                                    }
+                                }
+
+                                cmd.clear();
+                            }
+                            (KeyCode::Char(c), KeyEventKind::Press | KeyEventKind::Repeat, _) => {
+                                cmd.push(c);
+                                execute!(stdout, style::Print(c))?;
+                            }
+                            _ => {}
+                        }
                     }
-                    Event::Key(KeyEvent {
-                        code: KeyCode::Enter,
-                        kind: KeyEventKind::Press,
-                        modifiers: _,
-                        state: _,
-                    }) => {
-                        execute!(
-                            stdout,
-                            cursor::RestorePosition,
-                            style::Print(format!("$ {}", cmd)),
-                            cursor::MoveToNextLine(1),
-                            cursor::SavePosition,
-                            cursor::MoveTo(2, rows),
-                            terminal::Clear(terminal::ClearType::UntilNewLine),
-                        )?;
-                        cmd.clear();
-                    }
-                    Event::Key(KeyEvent {
-                        code: KeyCode::Char(c),
-                        kind: KeyEventKind::Press,
-                        modifiers: _,
-                        state: _,
-                    }) => {
-                        cmd.push(c);
-                        execute!(stdout, style::Print(c))?;
-                    }
-                    _ => {}
+                    Some(Ok(_)) => {},
+                    Some(Err(e)) => bail!(e),
+                    None => break,
                 }
             }
-            Some(Err(e)) => eprintln!("Error: {}\r", e),
-            None => break,
+            output = rx_stdout.recv() => {
+                let Some(output) = output else {
+                    break;
+                };
+                let output = std::str::from_utf8(&output)?;
+
+                disable_raw_mode()?;
+                execute!(
+                    stdout,
+                    cursor::RestorePosition,
+                    style::Print(output),
+                    cursor::MoveToNextLine(1),
+                    cursor::SavePosition,
+                    cursor::MoveTo(2 + cmd.len() as u16, rows),
+                    terminal::Clear(terminal::ClearType::UntilNewLine),
+                )?;
+                enable_raw_mode()?;
+            }
         }
     }
 
     disable_raw_mode()?;
 
-    todo!();
+    Ok(())
+}
 
-    // let mut stdout = io::stdout();
-    // let mut channel = session.channel_open_session().await?;
-    // channel.request_shell(true).await?;
-    // if let Some(data) = rx_out.recv().await {
-    //     stdout.write_all(&data).await?;
-    //     stdout.write_all(b"$ ").await?;
-    //     stdout.flush().await?;
-    // }
-    //
-    // let (tx_in, mut rx_in) = mpsc::channel(5);
-    //
-    // loop {
-    //     let Some(cmd) = rx_in.recv().await else {
-    //         continue;
-    //     };
-    //     let cmd: Command = cmd.parse()?;
-    //
-    //     match cmd {
-    //         Command::Exit => break,
-    //         Command::Clear => todo!(),
-    //         Command::Remote(cmd) => {
-    //             channel.data(cmd.as_bytes()).await?;
-    //
-    //             if let Some(data) = rx_out.recv().await {
-    //                 stdout.write_all(&data).await?;
-    //             }
-    //         }
-    //     }
-    //
-    //     stdout.write_all(b"$ ").await?;
-    //     stdout.flush().await?;
-    // }
-    //
-    // Ok(())
+#[tokio::main]
+async fn main() -> Result<()> {
+    let settings: Settings = Config::builder()
+        .add_source(config::Environment::with_prefix("RCTF"))
+        .add_source(config::File::with_name("./rctf.ini"))
+        .build()?
+        .try_deserialize()?;
+
+    let (tx_stdout, rx_stdout) = mpsc::channel(5);
+
+    let config = Arc::new(client::Config::default());
+    let sh = Client(tx_stdout);
+    let mut session = client::connect(config, (&settings.ip[..], settings.port), sh).await?;
+    let authenticated = session
+        .authenticate_password(&settings.username, &settings.password)
+        .await?;
+
+    if !authenticated {
+        bail!("Failed to authenticate.");
+    }
+
+    let (tx_stdin, mut rx_stdin) = mpsc::channel(5);
+
+    let mut terminal_handle = tokio::spawn(async move {
+        if let Err(e) = start_terminal(tx_stdin, rx_stdout).await {
+            eprintln!("{}", e);
+        };
+    });
+
+    let mut channel = session.channel_open_session().await?;
+    channel.request_shell(true).await?;
+
+    loop {
+        select! {
+            cmd = rx_stdin.recv() => {
+                let Some(cmd) = cmd else {
+                    continue;
+                };
+                channel.data(cmd.as_bytes()).await?;
+            }
+            res = &mut terminal_handle => {
+                res?;
+                break;
+            }
+        }
+    }
+
+    Ok(())
 }
