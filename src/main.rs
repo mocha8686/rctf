@@ -12,7 +12,10 @@ use crossterm::{
     terminal::{self, disable_raw_mode, enable_raw_mode},
 };
 use futures::StreamExt;
-use russh::{client, ChannelId, Disconnect, Pty, Sig};
+use russh::{
+    client::{self, Msg},
+    Channel, ChannelId, Disconnect, Pty, Sig,
+};
 use russh_keys::key;
 use serde::{Deserialize, Serialize};
 use tokio::io::{self, AsyncWriteExt};
@@ -173,22 +176,7 @@ struct Context {
 
 impl Context {
     async fn start(self) -> Result<()> {
-        let config = Arc::new(client::Config::default());
-        let sh = Client;
-        let mut session = client::connect(
-            config,
-            (&self.ssh_settings.ip[..], self.ssh_settings.port),
-            sh,
-        )
-        .await?;
-        let authenticated = session
-            .authenticate_password(&self.ssh_settings.username, &self.ssh_settings.password)
-            .await?;
-
-        if !authenticated {
-            bail!("Failed to authenticate.");
-        }
-
+        let session = self.create_session().await?;
         let mut channel = session.channel_open_session().await?;
         channel
             .request_pty(
@@ -210,6 +198,39 @@ impl Context {
 
         setup_terminal()?;
 
+        self.start_read_loop(&mut channel).await?;
+
+        channel.eof().await?;
+        session
+            .disconnect(Disconnect::ByApplication, "User exited.", "en")
+            .await?;
+        teardown_terminal()?;
+        println!();
+
+        Ok(())
+    }
+
+    async fn create_session(&self) -> Result<client::Handle<Client>> {
+        let config = Arc::new(client::Config::default());
+        let sh = Client;
+        let mut session = client::connect(
+            config,
+            (&self.ssh_settings.ip[..], self.ssh_settings.port),
+            sh,
+        )
+        .await?;
+        let authenticated = session
+            .authenticate_password(&self.ssh_settings.username, &self.ssh_settings.password)
+            .await?;
+
+        if !authenticated {
+            bail!("Failed to authenticate.");
+        }
+
+        Ok(session)
+    }
+
+    async fn start_read_loop(&self, channel: &mut Channel<Msg>) -> Result<()> {
         let mut reader = EventStream::new();
         loop {
             let Some(event) = reader.next().await else {
@@ -218,7 +239,7 @@ impl Context {
             let event = event?;
 
             if event == Event::Key(KeyCode::Esc.into()) {
-                break;
+                break Ok(());
             }
 
             if let Event::Key(KeyEvent {
@@ -247,15 +268,6 @@ impl Context {
                 channel.data(&data[..]).await?;
             }
         }
-
-        channel.eof().await?;
-        session
-            .disconnect(Disconnect::ByApplication, "User exited.", "en")
-            .await?;
-        teardown_terminal()?;
-        println!();
-
-        Ok(())
     }
 }
 
