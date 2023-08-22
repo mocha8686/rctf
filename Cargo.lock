@@ -468,6 +468,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "directories"
+version = "5.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a49173b84e034382284f27f1af4dcbbd231ffa358c0fe316541a7337f376a35"
+dependencies = [
+ "dirs-sys",
+]
+
+[[package]]
 name = "dirs"
 version = "5.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -517,6 +526,12 @@ dependencies = [
  "sha2",
  "zeroize",
 ]
+
+[[package]]
+name = "either"
+version = "1.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a26ae43d7bcc3b814de94796a5e736d4029efb0ee900c12e2d54c993ad1a1e07"
 
 [[package]]
 name = "errno"
@@ -747,6 +762,15 @@ dependencies = [
  "hermit-abi",
  "rustix",
  "windows-sys",
+]
+
+[[package]]
+name = "itertools"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1c173a5686ce8bfa551b3563d0c2170bf24ca44da99c7ca4bfdab5418c3fe57"
+dependencies = [
+ "either",
 ]
 
 [[package]]
@@ -1193,7 +1217,9 @@ dependencies = [
  "clap",
  "config",
  "crossterm",
+ "directories",
  "futures",
+ "itertools",
  "russh",
  "russh-keys",
  "serde",

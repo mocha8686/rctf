@@ -14,14 +14,18 @@ pub struct Context {
 }
 
 impl Context {
-    pub fn new() -> Result<Self> {
+    pub fn new(rctf_history: Option<VecDeque<String>>) -> Result<Self> {
         Ok(Self {
             supports_keyboard_enhancement: crossterm::terminal::supports_keyboard_enhancement()?,
-            ..Default::default()
+            rctf_history: rctf_history.unwrap_or_default(),
         })
     }
 
-    pub async fn start(mut self) -> Result<()> {
+    pub fn rctf_history(&self) -> &VecDeque<String> {
+        &self.rctf_history
+    }
+
+    pub async fn start(&mut self) -> Result<()> {
         terminal::setup(self.supports_keyboard_enhancement)?;
         let res = self.start_read_loop().await;
         terminal::teardown(self.supports_keyboard_enhancement)?;
