@@ -1,4 +1,4 @@
-use std::{str::FromStr, sync::Arc};
+use std::{process, str::FromStr, sync::Arc};
 
 use anyhow::{bail, Result};
 use async_trait::async_trait;
@@ -12,7 +12,7 @@ use crossterm::{
     terminal::{self, disable_raw_mode, enable_raw_mode},
 };
 use futures::StreamExt;
-use russh::{client, ChannelId, Pty};
+use russh::{client, ChannelId, Disconnect, Pty, Sig};
 use russh_keys::key;
 use serde::{Deserialize, Serialize};
 use tokio::io::{self, AsyncWriteExt};
@@ -85,6 +85,59 @@ impl client::Handler for Client {
         stderr.flush().await?;
         Ok((self, session))
     }
+
+    async fn exit_status(
+        self,
+        channel: ChannelId,
+        exit_status: u32,
+        mut session: client::Session,
+    ) -> core::result::Result<(Self, client::Session), Self::Error> {
+        session.eof(channel);
+        session.disconnect(
+            Disconnect::ByApplication,
+            "Process exited with status.",
+            "en",
+        );
+        process::exit(exit_status as i32);
+    }
+
+    async fn exit_signal(
+        self,
+        channel: ChannelId,
+        signal_name: Sig,
+        _core_dumped: bool,
+        error_message: &str,
+        _lang_tag: &str,
+        mut session: client::Session,
+    ) -> core::result::Result<(Self, client::Session), Self::Error> {
+        session.eof(channel);
+        session.disconnect(
+            Disconnect::ByApplication,
+            "Process exited with signal.",
+            "en",
+        );
+        eprintln!("SIG{:?}: {}", signal_name, error_message);
+        cleanup()?;
+        process::exit(1);
+    }
+}
+
+fn cleanup() -> Result<()> {
+    disable_raw_mode()?;
+
+    let mut stdout = std::io::stdout();
+    if let Ok(true) = terminal::supports_keyboard_enhancement() {
+        queue!(stdout, event::PopKeyboardEnhancementFlags)?;
+    }
+    execute!(
+        stdout,
+        event::DisableBracketedPaste,
+        event::PopKeyboardEnhancementFlags,
+        event::DisableFocusChange,
+        event::DisableMouseCapture,
+    )?;
+
+    Ok(())
 }
 
 #[tokio::main]
@@ -165,13 +218,22 @@ async fn main() -> Result<()> {
                 (KeyCode::Char('c'), KeyModifiers::CONTROL) => [ETX].into(),
                 (KeyCode::Char('d'), KeyModifiers::CONTROL) => [EOT].into(),
                 (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => [c as u8].into(),
+                (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
+                    channel.data(&[c as u8][..]).await?;
+                    continue;
+                }
                 _ => continue,
             };
             channel.data(&data[..]).await?;
         }
     }
 
-    disable_raw_mode()?;
+    channel.eof().await?;
+    session
+        .disconnect(Disconnect::ByApplication, "User exited.", "en")
+        .await?;
+    cleanup()?;
+    println!();
 
     Ok(())
 }
