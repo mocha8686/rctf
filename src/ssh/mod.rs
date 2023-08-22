@@ -1,14 +1,20 @@
 mod handler;
 
-use std::sync::Arc;
+use std::{sync::Arc, fmt::Display};
 
-use anyhow::{Result, bail};
-use crossterm::event::{EventStream, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use anyhow::{bail, Result};
+use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use futures::StreamExt;
-use russh::{client::{Handle, self, Msg, Config}, Disconnect, Pty, Channel};
-use serde::{Serialize, Deserialize};
+use russh::{
+    client::{self, Config, Handle, Msg},
+    Channel, Disconnect, Pty, Sig,
+};
+use tokio::sync::oneshot;
 
-use crate::terminal::{teardown_terminal, setup_terminal};
+use crate::{
+    terminal::{setup_terminal, teardown_terminal},
+    Context,
+};
 
 use self::handler::Handler;
 
@@ -16,22 +22,25 @@ const ETX: u8 = 3;
 const EOT: u8 = 4;
 const BACKSPACE: u8 = 8;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Settings {
-    ip: String,
-    port: u16,
-    username: String,
-    password: String,
+#[derive(Debug, Clone)]
+enum Exit {
+    Status(u32),
+    Signal(Sig, String),
 }
 
-#[derive(Debug, Clone)]
-pub struct Context {
-    pub ssh_settings: Settings,
+impl Display for Exit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Exit::Status(code) => write!(f, "Process exited with code {}.", code),
+            Exit::Signal(signal, reason) => write!(f, "Process exited with signal SIG{:?}: {}", signal, reason),
+        }
+    }
 }
 
 impl Context {
-    pub async fn start(self) -> Result<()> {
-        let session = self.create_session().await?;
+    pub async fn start_ssh(self) -> Result<()> {
+        let (tx_exit, rx_exit) = oneshot::channel();
+        let session = self.create_session(Handler::new(tx_exit)).await?;
         let mut channel = session.channel_open_session().await?;
         channel
             .request_pty(
@@ -53,25 +62,24 @@ impl Context {
 
         setup_terminal()?;
 
-        self.start_read_loop(&mut channel).await?;
+        self.start_read_loop(&mut channel, rx_exit).await?;
 
+        teardown_terminal()?;
         channel.eof().await?;
         session
             .disconnect(Disconnect::ByApplication, "User exited.", "en")
             .await?;
-        teardown_terminal()?;
         println!();
 
-        Ok(())
+       Ok(())
     }
 
-    async fn create_session(&self) -> Result<Handle<Handler>> {
+    async fn create_session(&self, handler: Handler) -> Result<Handle<Handler>> {
         let config = Arc::new(Config::default());
-        let sh = Handler;
         let mut session = client::connect(
             config,
             (&self.ssh_settings.ip[..], self.ssh_settings.port),
-            sh,
+            handler,
         )
         .await?;
         let authenticated = session
@@ -85,16 +93,21 @@ impl Context {
         Ok(session)
     }
 
-    async fn start_read_loop(&self, channel: &mut Channel<Msg>) -> Result<()> {
+    async fn start_read_loop(&self, channel: &mut Channel<Msg>, rx_exit: oneshot::Receiver<Exit>) -> Result<()> {
         let mut reader = EventStream::new();
         loop {
             let Some(event) = reader.next().await else {
-                continue;
+                let exit = rx_exit.await?;
+                if let Exit::Status(0) = exit {
+                    return Ok(());
+                } else {
+                    bail!(exit);
+                }
             };
             let event = event?;
 
             if event == Event::Key(KeyCode::Esc.into()) {
-                break Ok(());
+                return Ok(());
             }
 
             if let Event::Key(KeyEvent {

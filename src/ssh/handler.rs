@@ -1,16 +1,25 @@
-use std::process;
-
 use async_trait::async_trait;
 use russh::{
     client::{Handler as RusshHandler, Session},
     ChannelId, Disconnect, Sig,
 };
 use russh_keys::key;
-use tokio::io::{self, AsyncWriteExt};
+use tokio::{
+    io::{self, AsyncWriteExt},
+    sync::oneshot,
+};
 
 use crate::terminal::teardown_terminal;
 
-pub(super) struct Handler;
+use super::Exit;
+
+pub(super) struct Handler(Option<oneshot::Sender<Exit>>);
+
+impl Handler {
+    pub(super) fn new(tx_exit: oneshot::Sender<Exit>) -> Self {
+        Self(Some(tx_exit))
+    }
+}
 
 #[async_trait]
 impl RusshHandler for Handler {
@@ -49,7 +58,7 @@ impl RusshHandler for Handler {
     }
 
     async fn exit_status(
-        self,
+        mut self,
         channel: ChannelId,
         exit_status: u32,
         mut session: Session,
@@ -61,11 +70,12 @@ impl RusshHandler for Handler {
             "en",
         );
         teardown_terminal()?;
-        process::exit(exit_status as i32);
+        self.0.take().unwrap().send(Exit::Status(exit_status)).ok();
+        Ok((self, session))
     }
 
     async fn exit_signal(
-        self,
+        mut self,
         channel: ChannelId,
         signal_name: Sig,
         _core_dumped: bool,
@@ -79,8 +89,12 @@ impl RusshHandler for Handler {
             "Process exited with signal.",
             "en",
         );
-        eprintln!("SIG{:?}: {}", signal_name, error_message);
         teardown_terminal()?;
-        process::exit(1);
+        self.0
+            .take()
+            .unwrap()
+            .send(Exit::Signal(signal_name, error_message.to_string()))
+            .ok();
+        Ok((self, session))
     }
 }
