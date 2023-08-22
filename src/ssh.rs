@@ -35,9 +35,9 @@ enum Exit {
 impl Display for Exit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Exit::Status(code) => write!(f, "Process exited with code {}.", code),
+            Exit::Status(code) => write!(f, "Process exited with code {code}."),
             Exit::Signal(signal, reason) => {
-                write!(f, "Process exited with signal SIG{:?}: {}", signal, reason)
+                write!(f, "Process exited with signal SIG{signal:?}: {reason}")
             }
         }
     }
@@ -57,9 +57,9 @@ impl Context {
                 0,
                 0,
                 &[
-                    (Pty::VINTR, ETX as u32),
-                    (Pty::VEOF, EOT as u32),
-                    (Pty::VERASE, BACKSPACE as u32),
+                    (Pty::VINTR, ETX.into()),
+                    (Pty::VEOF, EOT.into()),
+                    (Pty::VERASE, BACKSPACE.into()),
                     (Pty::VEOL, b'\n'.into()),
                 ],
             )
@@ -133,7 +133,7 @@ impl Context {
                             }
                             _ => continue,
                         };
-                        channel.data(&data[..]).await?;
+                        channel.data(data).await?;
                     }
                 }
                 exit = rx_exit.recv() => {
@@ -142,9 +142,9 @@ impl Context {
                     };
                     if let Exit::Status(0) = exit {
                         return Ok(());
-                    } else {
-                        bail!(exit);
                     }
+
+                    bail!(exit);
                 }
             }
         }

@@ -7,7 +7,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode},
 };
 
-pub fn setup_terminal(supports_keyboard_enhancement: bool) -> Result<()> {
+pub fn setup(supports_keyboard_enhancement: bool) -> Result<()> {
     enable_raw_mode()?;
 
     let mut stdout = std::io::stdout();
@@ -32,7 +32,7 @@ pub fn setup_terminal(supports_keyboard_enhancement: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn teardown_terminal(supports_keyboard_enhancement: bool) -> Result<()> {
+pub fn teardown(supports_keyboard_enhancement: bool) -> Result<()> {
     let mut stdout = std::io::stdout();
     stdout.flush()?;
 

@@ -1,7 +1,6 @@
 use std::collections::VecDeque;
 
 use anyhow::Result;
-use terminal::{setup_terminal, teardown_terminal};
 
 pub(crate) mod constants;
 pub mod rctf;
@@ -23,9 +22,9 @@ impl Context {
     }
 
     pub async fn start(mut self) -> Result<()> {
-        setup_terminal(self.supports_keyboard_enhancement)?;
+        terminal::setup(self.supports_keyboard_enhancement)?;
         let res = self.start_read_loop().await;
-        teardown_terminal(self.supports_keyboard_enhancement)?;
+        terminal::teardown(self.supports_keyboard_enhancement)?;
         res
     }
 }
