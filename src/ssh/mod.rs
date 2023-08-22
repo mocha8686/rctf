@@ -9,7 +9,7 @@ use russh::{
     client::{self, Config, Handle, Msg},
     Channel, Disconnect, Pty, Sig,
 };
-use tokio::{sync::mpsc, select};
+use tokio::{select, sync::mpsc};
 
 use crate::{
     constants::{BACKSPACE, EOT, ETX},
@@ -17,6 +17,14 @@ use crate::{
 };
 
 use self::handler::Handler;
+
+#[derive(Debug, Clone)]
+pub(crate) struct SshSettings {
+    pub(crate) ip: String,
+    pub(crate) port: u16,
+    pub(crate) username: String,
+    pub(crate) password: String,
+}
 
 #[derive(Debug, Clone)]
 enum Exit {
@@ -36,9 +44,9 @@ impl Display for Exit {
 }
 
 impl Context {
-    pub(crate) async fn start_ssh(&mut self) -> Result<()> {
+    pub(crate) async fn start_ssh(&mut self, settings: SshSettings) -> Result<()> {
         let (tx_exit, rx_exit) = mpsc::channel(1);
-        let session = self.create_session(Handler::new(tx_exit)).await?;
+        let session = self.create_session(Handler::new(tx_exit), settings).await?;
         let mut channel = session.channel_open_session().await?;
         channel
             .request_pty(
@@ -69,16 +77,16 @@ impl Context {
         Ok(())
     }
 
-    async fn create_session(&self, handler: Handler) -> Result<Handle<Handler>> {
+    async fn create_session(
+        &self,
+        handler: Handler,
+        settings: SshSettings,
+    ) -> Result<Handle<Handler>> {
         let config = Arc::new(Config::default());
-        let mut session = client::connect(
-            config,
-            (&self.ssh_settings.ip[..], self.ssh_settings.port),
-            handler,
-        )
-        .await?;
+        let mut session =
+            client::connect(config, (&settings.ip[..], settings.port), handler).await?;
         let authenticated = session
-            .authenticate_password(&self.ssh_settings.username, &self.ssh_settings.password)
+            .authenticate_password(&settings.username, &settings.password)
             .await?;
 
         if !authenticated {
