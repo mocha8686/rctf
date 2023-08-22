@@ -88,7 +88,9 @@ impl Context {
                         column = cmd.len();
                         execute!(
                             stdout,
-                            cursor::MoveToColumn((column + PROMPT_LENGTH) as u16),
+                            cursor::MoveToColumn(PROMPT_LENGTH as u16),
+                            terminal::Clear(ClearType::UntilNewLine),
+                            style::Print(&cmd),
                         )?;
                     }
                     (KeyCode::Down, _) => {
@@ -105,7 +107,9 @@ impl Context {
                         column = cmd.len();
                         execute!(
                             stdout,
-                            cursor::MoveToColumn((column + PROMPT_LENGTH) as u16),
+                            cursor::MoveToColumn(PROMPT_LENGTH as u16),
+                            terminal::Clear(ClearType::UntilNewLine),
+                            style::Print(&cmd),
                         )?;
                     }
                     (KeyCode::Left, _) => {
