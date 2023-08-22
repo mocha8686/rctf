@@ -68,7 +68,7 @@ impl client::Handler for Client {
         session: client::Session,
     ) -> core::result::Result<(Self, client::Session), Self::Error> {
         let mut stdout = io::stdout();
-        stdout.write(data).await?;
+        stdout.write_all(data).await?;
         stdout.flush().await?;
         Ok((self, session))
     }
@@ -81,7 +81,7 @@ impl client::Handler for Client {
         session: client::Session,
     ) -> core::result::Result<(Self, client::Session), Self::Error> {
         let mut stderr = io::stderr();
-        stderr.write(data).await?;
+        stderr.write_all(data).await?;
         stderr.flush().await?;
         Ok((self, session))
     }
