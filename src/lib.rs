@@ -1,13 +1,14 @@
-use std::{io::{self, Write}, str::FromStr};
+use std::io::{self, Write};
 
 use anyhow::Result;
+use clap::{command, Parser, Subcommand};
 use constants::EOT;
 use crossterm::{
     cursor,
     event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
     execute,
     style::{self, Color},
-    terminal::ClearType,
+    terminal::{disable_raw_mode, enable_raw_mode, ClearType},
 };
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -17,25 +18,28 @@ pub mod constants;
 pub mod ssh;
 pub mod terminal;
 
-#[derive(Clone, Debug)]
-enum Command {
-    Clear,
-    Exit,
-    Ssh,
-    Invalid(String),
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+#[command(propagate_version = true)]
+struct Rctf {
+    #[command(subcommand)]
+    command: Command,
 }
 
-impl FromStr for Command {
-    type Err = std::convert::Infallible;
-
-    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        Ok(match s.trim() {
-            "clear" => Self::Clear,
-            "exit" => Self::Exit,
-            "ssh" => Self::Ssh,
-            s => Self::Invalid(s.to_string()),
-        })
-    }
+#[derive(Subcommand)]
+enum Command {
+    /// Clear the terminal
+    Clear,
+    /// Exit the program
+    Exit,
+    /// SSH into a remote host
+    Ssh {
+        /// The destination IP to connect to
+        ip: String,
+        /// The port to connect to on the remote host
+        #[arg(short, long, default_value_t = 22)]
+        port: u16,
+    },
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -69,9 +73,8 @@ impl Context {
 
     async fn start_read_loop(&mut self) -> Result<()> {
         let mut stdout = io::stdout();
-        let mut reader = EventStream::new();
 
-        'outer: loop {
+        loop {
             execute!(
                 stdout,
                 style::SetForegroundColor(Color::Blue),
@@ -80,71 +83,107 @@ impl Context {
                 style::Print("> "),
             )?;
 
-            let mut cmd = String::new();
+            let Some(cmd) = self.get_next_command().await? else {
+                continue;
+            };
 
-            loop {
-                let Some(event) = reader.next().await else {
-                    break;
-                };
-
-                if let Event::Key(KeyEvent {
-                    code,
-                    modifiers,
-                    kind: KeyEventKind::Press | KeyEventKind::Repeat,
-                    ..
-                }) = event?
-                {
-                    let data = match (code, modifiers) {
-                        (KeyCode::Esc, _) => {
-                            write!(stdout, "\r\n")?;
-                            break 'outer;
-                        }
-                        (KeyCode::Enter, _) => {
-                            write!(stdout, "\r\n")?;
-                            break;
-                        }
-                        (KeyCode::Backspace, _) => {
-                            if cmd.is_empty() {
-                                continue;
-                            }
-
-                            execute!(
-                                stdout,
-                                cursor::MoveLeft(1),
-                                crossterm::terminal::Clear(ClearType::UntilNewLine),
-                            )?;
-                            cmd.pop();
-
-                            continue;
-                        }
-                        // (KeyCode::Up, _) => todo!(),
-                        // (KeyCode::Down, _) => todo!(),
-                        // (KeyCode::Right, _) => todo!(),
-                        // (KeyCode::Left, _) => todo!(),
-                        (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                            write!(stdout, "^C\r\n")?;
-                            continue 'outer;
-                        }
-                        (KeyCode::Char('d'), KeyModifiers::CONTROL) => EOT as char,
-                        (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => c,
-                        _ => continue,
-                    };
-                    write!(stdout, "{}", data)?;
-                    stdout.flush()?;
-                    cmd.push(data);
-                }
+            if cmd.split_whitespace().count() == 0 {
+                continue;
             }
 
-            match cmd.parse::<Command>()? {
-                Command::Exit => break 'outer,
-                Command::Clear => execute!(stdout, crossterm::terminal::Clear(ClearType::All), cursor::MoveTo(0, 0))?,
-                Command::Ssh => {
-                    self.start_ssh().await?;
+            let cmd = match Rctf::try_parse_from(["rctf"].into_iter().chain(cmd.split_whitespace()))
+            {
+                Ok(cmd) => cmd,
+                Err(e) if e.kind() == clap::error::ErrorKind::DisplayHelp => {
+                    disable_raw_mode()?;
+                    write!(stdout, "{}", e)?;
+                    enable_raw_mode()?;
+                    continue;
                 }
-                Command::Invalid(_) => continue,
+                Err(e) => {
+                    disable_raw_mode()?;
+                    execute!(
+                        io::stderr(),
+                        style::SetForegroundColor(Color::Red),
+                        style::Print(e),
+                        style::ResetColor,
+                    )?;
+                    enable_raw_mode()?;
+                    continue;
+                }
+            };
+
+            match cmd.command {
+                Command::Clear => execute!(
+                    stdout,
+                    crossterm::terminal::Clear(ClearType::All),
+                    cursor::MoveTo(0, 0)
+                )?,
+                Command::Exit => break,
+                Command::Ssh { .. } => self.start_ssh().await?,
             }
         }
 
         Ok(())
+    }
+
+    async fn get_next_command(&self) -> Result<Option<String>> {
+        let mut stdout = io::stdout();
+        let mut reader = EventStream::new();
+        let mut cmd = String::new();
+        loop {
+            let Some(event) = reader.next().await else {
+                break;
+            };
+
+            if let Event::Key(KeyEvent {
+                code,
+                modifiers,
+                kind: KeyEventKind::Press | KeyEventKind::Repeat,
+                ..
+            }) = event?
+            {
+                let data = match (code, modifiers) {
+                    (KeyCode::Esc, _) => {
+                        write!(stdout, "\r\n")?;
+                        return Ok(Some("exit".to_string()));
+                    }
+                    (KeyCode::Enter, _) => {
+                        write!(stdout, "\r\n")?;
+                        break;
+                    }
+                    (KeyCode::Backspace, _) => {
+                        if cmd.is_empty() {
+                            continue;
+                        }
+
+                        execute!(
+                            stdout,
+                            cursor::MoveLeft(1),
+                            crossterm::terminal::Clear(ClearType::UntilNewLine),
+                        )?;
+                        cmd.pop();
+
+                        continue;
+                    }
+                    (KeyCode::Up, _) => todo!(),
+                    (KeyCode::Down, _) => todo!(),
+                    (KeyCode::Right, _) => todo!(),
+                    (KeyCode::Left, _) => todo!(),
+                    (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                        write!(stdout, "^C\r\n")?;
+                        return Ok(None);
+                    }
+                    (KeyCode::Char('d'), KeyModifiers::CONTROL) => EOT as char,
+                    (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => c,
+                    _ => continue,
+                };
+                write!(stdout, "{}", data)?;
+                stdout.flush()?;
+                cmd.push(data);
+            }
+        }
+
+        Ok(Some(cmd))
     }
 }
