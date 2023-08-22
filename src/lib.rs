@@ -31,6 +31,7 @@ enum Command {
     /// Clear the terminal
     Clear,
     /// Exit the program
+    #[command(aliases = ["quit", "q"])]
     Exit,
     /// SSH into a remote host
     Ssh {
