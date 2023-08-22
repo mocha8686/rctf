@@ -1,4 +1,4 @@
-use std::io::{self, Write};
+use std::{io::{self, Write}, str::FromStr};
 
 use anyhow::Result;
 use constants::EOT;
@@ -16,6 +16,27 @@ use terminal::{setup_terminal, teardown_terminal};
 pub mod constants;
 pub mod ssh;
 pub mod terminal;
+
+#[derive(Clone, Debug)]
+enum Command {
+    Clear,
+    Exit,
+    Ssh,
+    Invalid(String),
+}
+
+impl FromStr for Command {
+    type Err = std::convert::Infallible;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        Ok(match s.trim() {
+            "clear" => Self::Clear,
+            "exit" => Self::Exit,
+            "ssh" => Self::Ssh,
+            s => Self::Invalid(s.to_string()),
+        })
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Settings {
@@ -114,13 +135,13 @@ impl Context {
                 }
             }
 
-            match &*cmd.trim() {
-                "exit" => break 'outer,
-                "clear" => execute!(stdout, crossterm::terminal::Clear(ClearType::All), cursor::MoveTo(0, 0))?,
-                "ssh" => {
+            match cmd.parse::<Command>()? {
+                Command::Exit => break 'outer,
+                Command::Clear => execute!(stdout, crossterm::terminal::Clear(ClearType::All), cursor::MoveTo(0, 0))?,
+                Command::Ssh => {
                     self.start_ssh().await?;
                 }
-                _ => continue,
+                Command::Invalid(_) => continue,
             }
         }
 
