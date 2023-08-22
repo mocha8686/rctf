@@ -8,7 +8,7 @@ use crossterm::{
         self, Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
         KeyboardEnhancementFlags,
     },
-    execute,
+    execute, queue,
     terminal::{self, disable_raw_mode, enable_raw_mode},
 };
 use futures::StreamExt;
@@ -98,6 +98,7 @@ impl client::Handler for Client {
             "Process exited with status.",
             "en",
         );
+        cleanup()?;
         process::exit(exit_status as i32);
     }
 
@@ -120,6 +121,31 @@ impl client::Handler for Client {
         cleanup()?;
         process::exit(1);
     }
+}
+
+fn setup() -> Result<()> {
+    enable_raw_mode()?;
+
+    let mut stdout = std::io::stdout();
+    if let Ok(true) = terminal::supports_keyboard_enhancement() {
+        queue!(
+            stdout,
+            event::PushKeyboardEnhancementFlags(
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+                    | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
+                    | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+            )
+        )?;
+    }
+    execute!(
+        stdout,
+        event::EnableBracketedPaste,
+        event::EnableFocusChange,
+        event::EnableMouseCapture,
+    )?;
+
+    Ok(())
 }
 
 fn cleanup() -> Result<()> {
@@ -178,25 +204,13 @@ async fn main() -> Result<()> {
         .await?;
     channel.request_shell(true).await?;
 
-    enable_raw_mode()?;
-
-    if let Ok(true) = terminal::supports_keyboard_enhancement() {
-        execute!(
-            std::io::stdout(),
-            event::PushKeyboardEnhancementFlags(
-                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                    | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
-                    | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
-                    | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
-            )
-        )?;
-    }
+    setup()?;
 
     let mut reader = EventStream::new();
 
     loop {
         let Some(event) = reader.next().await else {
-            break;
+            continue;
         };
         let event = event?;
 
