@@ -166,91 +166,108 @@ fn cleanup() -> Result<()> {
     Ok(())
 }
 
+#[derive(Debug, Clone)]
+struct Context {
+    ssh_settings: Settings,
+}
+
+impl Context {
+    async fn start(self) -> Result<()> {
+        let config = Arc::new(client::Config::default());
+        let sh = Client;
+        let mut session = client::connect(
+            config,
+            (&self.ssh_settings.ip[..], self.ssh_settings.port),
+            sh,
+        )
+        .await?;
+        let authenticated = session
+            .authenticate_password(&self.ssh_settings.username, &self.ssh_settings.password)
+            .await?;
+
+        if !authenticated {
+            bail!("Failed to authenticate.");
+        }
+
+        let mut channel = session.channel_open_session().await?;
+        channel
+            .request_pty(
+                true,
+                "xterm",
+                0,
+                0,
+                0,
+                0,
+                &[
+                    (Pty::VINTR, ETX as u32),
+                    (Pty::VEOF, EOT as u32),
+                    (Pty::VERASE, BACKSPACE as u32),
+                    (Pty::VEOL, b'\n'.into()),
+                ],
+            )
+            .await?;
+        channel.request_shell(true).await?;
+
+        setup()?;
+
+        let mut reader = EventStream::new();
+        loop {
+            let Some(event) = reader.next().await else {
+                continue;
+            };
+            let event = event?;
+
+            if event == Event::Key(KeyCode::Esc.into()) {
+                break;
+            }
+
+            if let Event::Key(KeyEvent {
+                code,
+                modifiers,
+                kind: KeyEventKind::Press | KeyEventKind::Repeat,
+                ..
+            }) = event
+            {
+                let data: &[u8] = match (code, modifiers) {
+                    (KeyCode::Enter, _) => &[b'\n'],
+                    (KeyCode::Backspace, _) => &[BACKSPACE],
+                    (KeyCode::Tab, _) => &[b'\t'],
+                    (KeyCode::Up, _) => b"\x1b[A",
+                    (KeyCode::Down, _) => b"\x1b[B",
+                    (KeyCode::Right, _) => b"\x1b[C",
+                    (KeyCode::Left, _) => b"\x1b[D",
+                    (KeyCode::Char('c'), KeyModifiers::CONTROL) => &[ETX],
+                    (KeyCode::Char('d'), KeyModifiers::CONTROL) => &[EOT],
+                    (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
+                        channel.data(&[c as u8][..]).await?;
+                        continue;
+                    }
+                    _ => continue,
+                };
+                channel.data(&data[..]).await?;
+            }
+        }
+
+        channel.eof().await?;
+        session
+            .disconnect(Disconnect::ByApplication, "User exited.", "en")
+            .await?;
+        cleanup()?;
+        println!();
+
+        Ok(())
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let settings: Settings = Config::builder()
+    let ssh_settings: Settings = Config::builder()
         .add_source(config::Environment::with_prefix("RCTF"))
         .add_source(config::File::with_name("./rctf.ini"))
         .build()?
         .try_deserialize()?;
 
-    let config = Arc::new(client::Config::default());
-    let sh = Client;
-    let mut session = client::connect(config, (&settings.ip[..], settings.port), sh).await?;
-    let authenticated = session
-        .authenticate_password(&settings.username, &settings.password)
-        .await?;
+    let context = Context { ssh_settings };
 
-    if !authenticated {
-        bail!("Failed to authenticate.");
-    }
-
-    let mut channel = session.channel_open_session().await?;
-    channel
-        .request_pty(
-            true,
-            "xterm",
-            0,
-            0,
-            0,
-            0,
-            &[
-                (Pty::VINTR, ETX as u32),
-                (Pty::VEOF, EOT as u32),
-                (Pty::VERASE, BACKSPACE as u32),
-                (Pty::VEOL, b'\n'.into()),
-            ],
-        )
-        .await?;
-    channel.request_shell(true).await?;
-
-    setup()?;
-
-    let mut reader = EventStream::new();
-
-    loop {
-        let Some(event) = reader.next().await else {
-            continue;
-        };
-        let event = event?;
-
-        if event == Event::Key(KeyCode::Esc.into()) {
-            break;
-        }
-
-        if let Event::Key(KeyEvent {
-            code,
-            modifiers,
-            kind: KeyEventKind::Press | KeyEventKind::Repeat,
-            ..
-        }) = event
-        {
-            let data: &[u8] = match (code, modifiers) {
-                (KeyCode::Enter, _) => &[b'\n'],
-                (KeyCode::Backspace, _) => &[BACKSPACE],
-                (KeyCode::Tab, _) => &[b'\t'],
-                (KeyCode::Up, _) => b"\x1b[A",
-                (KeyCode::Down, _) => b"\x1b[B",
-                (KeyCode::Right, _) => b"\x1b[C",
-                (KeyCode::Left, _) => b"\x1b[D",
-                (KeyCode::Char('c'), KeyModifiers::CONTROL) => &[ETX],
-                (KeyCode::Char('d'), KeyModifiers::CONTROL) => &[EOT],
-                (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
-                    channel.data(&[c as u8][..]).await?;
-                    continue;
-                }
-                _ => continue,
-            };
-            channel.data(&data[..]).await?;
-        }
-    }
-
-    channel.eof().await?;
-    session
-        .disconnect(Disconnect::ByApplication, "User exited.", "en")
-        .await?;
-    cleanup()?;
-    println!();
-
-    Ok(())
+    context.start().await
 }
