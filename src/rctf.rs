@@ -1,6 +1,6 @@
 use std::io::{self, Write};
 
-use crate::{constants::EOT, ssh::SshSettings, Context};
+use crate::{constants::MAX_HISTORY_SIZE, ssh::SshSettings, Context};
 use anyhow::Result;
 use clap::{arg, command, value_parser, Parser, Subcommand};
 use crossterm::{
@@ -133,10 +133,18 @@ impl Context {
         Ok(())
     }
 
-    async fn get_next_command(&self) -> Result<Option<String>> {
+    async fn get_next_command(&mut self) -> Result<Option<String>> {
+        const PROMPT_LENGTH: usize = 6;
+
+        let mut history = self.rctf_history.clone();
+        let history_len = history.len();
         let mut stdout = io::stdout();
         let mut reader = EventStream::new();
-        let mut cmd = String::new();
+        let mut current_cmd = String::new();
+        let mut cmd = &mut current_cmd;
+        let mut column = 0usize;
+        let mut history_index = self.rctf_history.len();
+
         loop {
             let Some(event) = reader.next().await else {
                 break;
@@ -149,7 +157,7 @@ impl Context {
                 ..
             }) = event?
             {
-                let data = match (code, modifiers) {
+                match (code, modifiers) {
                     (KeyCode::Esc, _) => {
                         write!(stdout, "\r\n")?;
                         return Ok(Some("exit".to_string()));
@@ -159,37 +167,95 @@ impl Context {
                         break;
                     }
                     (KeyCode::Backspace, _) => {
-                        if cmd.is_empty() {
+                        if column == 0 {
                             continue;
                         }
 
+                        column -= 1;
+                        cmd.remove(column);
                         execute!(
                             stdout,
                             cursor::MoveLeft(1),
                             crossterm::terminal::Clear(ClearType::UntilNewLine),
+                            cursor::SavePosition,
+                            style::Print(&cmd[column..]),
+                            cursor::RestorePosition,
                         )?;
-                        cmd.pop();
-
-                        continue;
                     }
-                    (KeyCode::Up, _) => todo!(),
-                    (KeyCode::Down, _) => todo!(),
-                    (KeyCode::Right, _) => todo!(),
-                    (KeyCode::Left, _) => todo!(),
+                    (KeyCode::Up, _) => {
+                        if history_index == 0 {
+                            continue;
+                        }
+
+                        if history_index == history_len {
+                            current_cmd = cmd.clone();
+                        }
+                        history_index -= 1;
+                        cmd = history.get_mut(history_index).unwrap();
+                        column = cmd.len();
+                        execute!(
+                            stdout,
+                            cursor::MoveToColumn((column + PROMPT_LENGTH) as u16),
+                        )?;
+                    }
+                    (KeyCode::Down, _) => {
+                        if history_index == history_len {
+                            continue;
+                        }
+
+                        history_index += 1;
+                        if history_index == self.rctf_history.len() {
+                            cmd = &mut current_cmd;
+                        } else {
+                            cmd = history.get_mut(history_index).unwrap();
+                        }
+                        column = cmd.len();
+                        execute!(
+                            stdout,
+                            cursor::MoveToColumn((column + PROMPT_LENGTH) as u16),
+                        )?;
+                    }
+                    (KeyCode::Left, _) => {
+                        if column == 0 {
+                            continue;
+                        }
+
+                        column -= 1;
+                        execute!(stdout, cursor::MoveLeft(1),)?;
+                    }
+                    (KeyCode::Right, _) => {
+                        if column == cmd.len() {
+                            continue;
+                        }
+
+                        column += 1;
+                        execute!(stdout, cursor::MoveRight(1),)?;
+                    }
                     (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                         write!(stdout, "^C\r\n")?;
                         return Ok(None);
                     }
-                    (KeyCode::Char('d'), KeyModifiers::CONTROL) => EOT as char,
-                    (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => c,
-                    _ => continue,
-                };
-                write!(stdout, "{}", data)?;
-                stdout.flush()?;
-                cmd.push(data);
+                    (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
+                        cmd.insert(column, c);
+                        execute!(
+                            stdout,
+                            style::Print(c),
+                            cursor::SavePosition,
+                            crossterm::terminal::Clear(ClearType::UntilNewLine),
+                            style::Print(&cmd[column + 1..]),
+                            cursor::RestorePosition,
+                        )?;
+                        column += 1;
+                    }
+                    _ => {}
+                }
             }
         }
 
-        Ok(Some(cmd))
+        self.rctf_history.push_back(cmd.clone());
+        while self.rctf_history.len() > MAX_HISTORY_SIZE {
+            self.rctf_history.pop_front();
+        }
+        Ok(Some(cmd.to_string()))
     }
 }
