@@ -4,14 +4,14 @@ use anyhow::Result;
 use crossterm::{
     event::{self, KeyboardEnhancementFlags},
     execute, queue,
-    terminal::{self, disable_raw_mode, enable_raw_mode},
+    terminal::{disable_raw_mode, enable_raw_mode},
 };
 
-pub fn setup_terminal() -> Result<()> {
+pub fn setup_terminal(supports_keyboard_enhancement: bool) -> Result<()> {
     enable_raw_mode()?;
 
     let mut stdout = std::io::stdout();
-    if let Ok(true) = terminal::supports_keyboard_enhancement() {
+    if supports_keyboard_enhancement {
         queue!(
             stdout,
             event::PushKeyboardEnhancementFlags(
@@ -32,19 +32,19 @@ pub fn setup_terminal() -> Result<()> {
     Ok(())
 }
 
-pub fn teardown_terminal() -> Result<()> {
+pub fn teardown_terminal(supports_keyboard_enhancement: bool) -> Result<()> {
     let mut stdout = std::io::stdout();
     stdout.flush()?;
 
     disable_raw_mode()?;
 
-    if let Ok(true) = terminal::supports_keyboard_enhancement() {
+    if supports_keyboard_enhancement {
         queue!(stdout, event::PopKeyboardEnhancementFlags)?;
     }
+
     execute!(
         stdout,
         event::DisableBracketedPaste,
-        event::PopKeyboardEnhancementFlags,
         event::DisableFocusChange,
         event::DisableMouseCapture,
     )?;

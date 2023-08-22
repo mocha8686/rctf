@@ -1,6 +1,6 @@
 use anyhow::Result;
 use config::Config;
-use rctf::{Settings, Context};
+use rctf::{Context, Settings};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -10,7 +10,9 @@ async fn main() -> Result<()> {
         .build()?
         .try_deserialize()?;
 
-    let context = Context { ssh_settings };
+    let context = Context::new(ssh_settings)?;
 
-    context.start_ssh().await
+    context.start().await?;
+
+    Ok(())
 }

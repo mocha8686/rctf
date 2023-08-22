@@ -1,6 +1,6 @@
 mod handler;
 
-use std::{sync::Arc, fmt::Display};
+use std::{fmt::Display, sync::Arc};
 
 use anyhow::{bail, Result};
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -9,18 +9,14 @@ use russh::{
     client::{self, Config, Handle, Msg},
     Channel, Disconnect, Pty, Sig,
 };
-use tokio::sync::oneshot;
+use tokio::{sync::mpsc, select};
 
 use crate::{
-    terminal::{setup_terminal, teardown_terminal},
+    constants::{BACKSPACE, EOT, ETX},
     Context,
 };
 
 use self::handler::Handler;
-
-const ETX: u8 = 3;
-const EOT: u8 = 4;
-const BACKSPACE: u8 = 8;
 
 #[derive(Debug, Clone)]
 enum Exit {
@@ -32,14 +28,16 @@ impl Display for Exit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Exit::Status(code) => write!(f, "Process exited with code {}.", code),
-            Exit::Signal(signal, reason) => write!(f, "Process exited with signal SIG{:?}: {}", signal, reason),
+            Exit::Signal(signal, reason) => {
+                write!(f, "Process exited with signal SIG{:?}: {}", signal, reason)
+            }
         }
     }
 }
 
 impl Context {
-    pub async fn start_ssh(self) -> Result<()> {
-        let (tx_exit, rx_exit) = oneshot::channel();
+    pub(crate) async fn start_ssh(&mut self) -> Result<()> {
+        let (tx_exit, rx_exit) = mpsc::channel(1);
         let session = self.create_session(Handler::new(tx_exit)).await?;
         let mut channel = session.channel_open_session().await?;
         channel
@@ -60,18 +58,15 @@ impl Context {
             .await?;
         channel.request_shell(true).await?;
 
-        setup_terminal()?;
+        self.start_ssh_read_loop(&mut channel, rx_exit).await?;
 
-        self.start_read_loop(&mut channel, rx_exit).await?;
-
-        teardown_terminal()?;
         channel.eof().await?;
         session
             .disconnect(Disconnect::ByApplication, "User exited.", "en")
             .await?;
         println!();
 
-       Ok(())
+        Ok(())
     }
 
     async fn create_session(&self, handler: Handler) -> Result<Handle<Handler>> {
@@ -93,47 +88,56 @@ impl Context {
         Ok(session)
     }
 
-    async fn start_read_loop(&self, channel: &mut Channel<Msg>, rx_exit: oneshot::Receiver<Exit>) -> Result<()> {
+    async fn start_ssh_read_loop(
+        &self,
+        channel: &mut Channel<Msg>,
+        mut rx_exit: mpsc::Receiver<Exit>,
+    ) -> Result<()> {
         let mut reader = EventStream::new();
         loop {
-            let Some(event) = reader.next().await else {
-                let exit = rx_exit.await?;
-                if let Exit::Status(0) = exit {
-                    return Ok(());
-                } else {
-                    bail!(exit);
-                }
-            };
-            let event = event?;
+            select! {
+                event = reader.next() => {
+                    let Some(event) = event else {
+                        return Ok(());
+                    };
 
-            if event == Event::Key(KeyCode::Esc.into()) {
-                return Ok(());
-            }
-
-            if let Event::Key(KeyEvent {
-                code,
-                modifiers,
-                kind: KeyEventKind::Press | KeyEventKind::Repeat,
-                ..
-            }) = event
-            {
-                let data: &[u8] = match (code, modifiers) {
-                    (KeyCode::Enter, _) => &[b'\n'],
-                    (KeyCode::Backspace, _) => &[BACKSPACE],
-                    (KeyCode::Tab, _) => &[b'\t'],
-                    (KeyCode::Up, _) => b"\x1b[A",
-                    (KeyCode::Down, _) => b"\x1b[B",
-                    (KeyCode::Right, _) => b"\x1b[C",
-                    (KeyCode::Left, _) => b"\x1b[D",
-                    (KeyCode::Char('c'), KeyModifiers::CONTROL) => &[ETX],
-                    (KeyCode::Char('d'), KeyModifiers::CONTROL) => &[EOT],
-                    (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
-                        channel.data(&[c as u8][..]).await?;
-                        continue;
+                    if let Event::Key(KeyEvent {
+                        code,
+                        modifiers,
+                        kind: KeyEventKind::Press | KeyEventKind::Repeat,
+                        ..
+                    }) = event?
+                    {
+                        let data: &[u8] = match (code, modifiers) {
+                            (KeyCode::Esc, _) => return Ok(()),
+                            (KeyCode::Enter, _) => &[b'\n'],
+                            (KeyCode::Backspace, _) => &[BACKSPACE],
+                            (KeyCode::Tab, _) => &[b'\t'],
+                            (KeyCode::Up, _) => b"\x1b[A",
+                            (KeyCode::Down, _) => b"\x1b[B",
+                            (KeyCode::Right, _) => b"\x1b[C",
+                            (KeyCode::Left, _) => b"\x1b[D",
+                            (KeyCode::Char('c'), KeyModifiers::CONTROL) => &[ETX],
+                            (KeyCode::Char('d'), KeyModifiers::CONTROL) => &[EOT],
+                            (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
+                                channel.data(&[c as u8][..]).await?;
+                                continue;
+                            }
+                            _ => continue,
+                        };
+                        channel.data(&data[..]).await?;
                     }
-                    _ => continue,
-                };
-                channel.data(&data[..]).await?;
+                }
+                exit = rx_exit.recv() => {
+                    let Some(exit) = exit else {
+                        bail!("Failed to get exit status.");
+                    };
+                    if let Exit::Status(0) = exit {
+                        return Ok(());
+                    } else {
+                        bail!(exit);
+                    }
+                }
             }
         }
     }

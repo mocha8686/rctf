@@ -6,17 +6,15 @@ use russh::{
 use russh_keys::key;
 use tokio::{
     io::{self, AsyncWriteExt},
-    sync::oneshot,
+    sync::mpsc,
 };
-
-use crate::terminal::teardown_terminal;
 
 use super::Exit;
 
-pub(super) struct Handler(Option<oneshot::Sender<Exit>>);
+pub(super) struct Handler(Option<mpsc::Sender<Exit>>);
 
 impl Handler {
-    pub(super) fn new(tx_exit: oneshot::Sender<Exit>) -> Self {
+    pub(super) fn new(tx_exit: mpsc::Sender<Exit>) -> Self {
         Self(Some(tx_exit))
     }
 }
@@ -69,8 +67,11 @@ impl RusshHandler for Handler {
             "Process exited with status.",
             "en",
         );
-        teardown_terminal()?;
-        self.0.take().unwrap().send(Exit::Status(exit_status)).ok();
+        self.0
+            .take()
+            .unwrap()
+            .send(Exit::Status(exit_status))
+            .await?;
         Ok((self, session))
     }
 
@@ -89,12 +90,11 @@ impl RusshHandler for Handler {
             "Process exited with signal.",
             "en",
         );
-        teardown_terminal()?;
         self.0
             .take()
             .unwrap()
             .send(Exit::Signal(signal_name, error_message.to_string()))
-            .ok();
+            .await?;
         Ok((self, session))
     }
 }
