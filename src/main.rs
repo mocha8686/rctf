@@ -1,19 +1,21 @@
-use std::{io, str::FromStr, sync::Arc};
+use std::{str::FromStr, sync::Arc};
 
 use anyhow::{bail, Result};
 use async_trait::async_trait;
 use config::Config;
 use crossterm::{
-    cursor,
-    event::{self, Event, EventStream, KeyCode, KeyEventKind, KeyModifiers},
-    execute, queue, style,
+    event::{
+        self, Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
+        KeyboardEnhancementFlags,
+    },
+    execute,
     terminal::{self, disable_raw_mode, enable_raw_mode},
 };
 use futures::StreamExt;
-use russh::{client, ChannelId};
+use russh::{client, ChannelId, Pty};
 use russh_keys::key;
 use serde::{Deserialize, Serialize};
-use tokio::{select, sync::mpsc};
+use tokio::io::{self, AsyncWriteExt};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Settings {
@@ -42,7 +44,11 @@ impl FromStr for Command {
     }
 }
 
-struct Client(mpsc::Sender<Box<[u8]>>);
+struct Client;
+
+const ETX: u8 = 3;
+const EOT: u8 = 4;
+const BACKSPACE: u8 = 8;
 
 #[async_trait]
 impl client::Handler for Client {
@@ -61,115 +67,24 @@ impl client::Handler for Client {
         data: &[u8],
         session: client::Session,
     ) -> core::result::Result<(Self, client::Session), Self::Error> {
-        self.0.send(data.into()).await?;
+        let mut stdout = io::stdout();
+        stdout.write(data).await?;
+        stdout.flush().await?;
         Ok((self, session))
     }
-}
 
-async fn start_terminal(
-    tx_stdin: mpsc::Sender<String>,
-    mut rx_stdout: mpsc::Receiver<Box<[u8]>>,
-) -> Result<()> {
-    let mut stdout = io::stdout();
-
-    if let Ok(true) = terminal::supports_keyboard_enhancement() {
-        queue!(
-            stdout,
-            event::PushKeyboardEnhancementFlags(
-                event::KeyboardEnhancementFlags::REPORT_EVENT_TYPES,
-            )
-        )?;
+    async fn extended_data(
+        self,
+        _channel: ChannelId,
+        _ext: u32,
+        data: &[u8],
+        session: client::Session,
+    ) -> core::result::Result<(Self, client::Session), Self::Error> {
+        let mut stderr = io::stderr();
+        stderr.write(data).await?;
+        stderr.flush().await?;
+        Ok((self, session))
     }
-
-    enable_raw_mode()?;
-    let (_, rows) = terminal::size()?;
-    execute!(
-        stdout,
-        terminal::Clear(terminal::ClearType::All),
-        cursor::MoveTo(0, 0),
-        cursor::SavePosition,
-        cursor::MoveTo(0, rows),
-        style::Print("$ "),
-    )?;
-
-    let mut reader = EventStream::new();
-    let mut cmd = String::new();
-    loop {
-        select! {
-            event = reader.next() => {
-                match event {
-                    Some(Ok(Event::Key(e))) => {
-                        match (e.code, e.kind, e.modifiers) {
-                            (KeyCode::Esc, KeyEventKind::Press, _) | (KeyCode::Char('c'), KeyEventKind::Press, KeyModifiers::CONTROL) => break,
-                            (KeyCode::Backspace, KeyEventKind::Press | KeyEventKind::Repeat, _) => {
-                                if cmd.is_empty() {
-                                    continue;
-                                }
-                                cmd.pop();
-                                execute!(
-                                    stdout,
-                                    cursor::MoveLeft(1),
-                                    terminal::Clear(terminal::ClearType::UntilNewLine),
-                                )?;
-                            }
-                            (KeyCode::Enter, KeyEventKind::Press | KeyEventKind::Repeat, _) => {
-                                execute!(
-                                    stdout,
-                                    cursor::RestorePosition,
-                                    style::Print(format!("$ {}", cmd)),
-                                    cursor::MoveToNextLine(1),
-                                    cursor::SavePosition,
-                                    cursor::MoveTo(2, rows),
-                                    terminal::Clear(terminal::ClearType::UntilNewLine),
-                                )?;
-
-                                {
-                                    let cmd: Command = cmd.parse()?;
-                                    match cmd {
-                                        Command::Exit => break,
-                                        Command::Clear => execute!(stdout, terminal::Clear(terminal::ClearType::FromCursorUp))?,
-                                        Command::Remote(cmd) => tx_stdin.send(cmd).await?,
-                                    }
-                                }
-
-                                cmd.clear();
-                            }
-                            (KeyCode::Char(c), KeyEventKind::Press | KeyEventKind::Repeat, _) => {
-                                cmd.push(c);
-                                execute!(stdout, style::Print(c))?;
-                            }
-                            _ => {}
-                        }
-                    }
-                    Some(Ok(_)) => {},
-                    Some(Err(e)) => bail!(e),
-                    None => break,
-                }
-            }
-            output = rx_stdout.recv() => {
-                let Some(output) = output else {
-                    break;
-                };
-                let output = std::str::from_utf8(&output)?;
-
-                disable_raw_mode()?;
-                execute!(
-                    stdout,
-                    cursor::RestorePosition,
-                    style::Print(output),
-                    cursor::MoveToNextLine(1),
-                    cursor::SavePosition,
-                    cursor::MoveTo(2 + cmd.len() as u16, rows),
-                    terminal::Clear(terminal::ClearType::UntilNewLine),
-                )?;
-                enable_raw_mode()?;
-            }
-        }
-    }
-
-    disable_raw_mode()?;
-
-    Ok(())
 }
 
 #[tokio::main]
@@ -180,10 +95,8 @@ async fn main() -> Result<()> {
         .build()?
         .try_deserialize()?;
 
-    let (tx_stdout, rx_stdout) = mpsc::channel(5);
-
     let config = Arc::new(client::Config::default());
-    let sh = Client(tx_stdout);
+    let sh = Client;
     let mut session = client::connect(config, (&settings.ip[..], settings.port), sh).await?;
     let authenticated = session
         .authenticate_password(&settings.username, &settings.password)
@@ -193,31 +106,72 @@ async fn main() -> Result<()> {
         bail!("Failed to authenticate.");
     }
 
-    let (tx_stdin, mut rx_stdin) = mpsc::channel(5);
-
-    let mut terminal_handle = tokio::spawn(async move {
-        if let Err(e) = start_terminal(tx_stdin, rx_stdout).await {
-            eprintln!("{}", e);
-        };
-    });
-
     let mut channel = session.channel_open_session().await?;
+    channel
+        .request_pty(
+            true,
+            "xterm",
+            0,
+            0,
+            0,
+            0,
+            &[
+                (Pty::VINTR, ETX as u32),
+                (Pty::VEOF, EOT as u32),
+                (Pty::VERASE, BACKSPACE as u32),
+                (Pty::VEOL, b'\n'.into()),
+            ],
+        )
+        .await?;
     channel.request_shell(true).await?;
 
+    enable_raw_mode()?;
+
+    if let Ok(true) = terminal::supports_keyboard_enhancement() {
+        execute!(
+            std::io::stdout(),
+            event::PushKeyboardEnhancementFlags(
+                KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | KeyboardEnhancementFlags::REPORT_ALL_KEYS_AS_ESCAPE_CODES
+                    | KeyboardEnhancementFlags::REPORT_ALTERNATE_KEYS
+                    | KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+            )
+        )?;
+    }
+
+    let mut reader = EventStream::new();
+
     loop {
-        select! {
-            cmd = rx_stdin.recv() => {
-                let Some(cmd) = cmd else {
-                    continue;
-                };
-                channel.data(cmd.as_bytes()).await?;
-            }
-            res = &mut terminal_handle => {
-                res?;
-                break;
-            }
+        let Some(event) = reader.next().await else {
+            break;
+        };
+        let event = event?;
+
+        if event == Event::Key(KeyCode::Esc.into()) {
+            break;
+        }
+
+        if let Event::Key(KeyEvent {
+            code,
+            modifiers,
+            kind: KeyEventKind::Press | KeyEventKind::Repeat,
+            ..
+        }) = event
+        {
+            let data: Box<[u8]> = match (code, modifiers) {
+                (KeyCode::Enter, _) => [b'\n'].into(),
+                (KeyCode::Backspace, _) => [BACKSPACE].into(),
+                (KeyCode::Tab, _) => [b'\t'].into(),
+                (KeyCode::Char('c'), KeyModifiers::CONTROL) => [ETX].into(),
+                (KeyCode::Char('d'), KeyModifiers::CONTROL) => [EOT].into(),
+                (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => [c as u8].into(),
+                _ => continue,
+            };
+            channel.data(&data[..]).await?;
         }
     }
+
+    disable_raw_mode()?;
 
     Ok(())
 }
