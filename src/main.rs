@@ -225,13 +225,16 @@ async fn main() -> Result<()> {
             ..
         }) = event
         {
-            let data: Box<[u8]> = match (code, modifiers) {
-                (KeyCode::Enter, _) => [b'\n'].into(),
-                (KeyCode::Backspace, _) => [BACKSPACE].into(),
-                (KeyCode::Tab, _) => [b'\t'].into(),
-                (KeyCode::Char('c'), KeyModifiers::CONTROL) => [ETX].into(),
-                (KeyCode::Char('d'), KeyModifiers::CONTROL) => [EOT].into(),
-                (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => [c as u8].into(),
+            let data: &[u8] = match (code, modifiers) {
+                (KeyCode::Enter, _) => &[b'\n'],
+                (KeyCode::Backspace, _) => &[BACKSPACE],
+                (KeyCode::Tab, _) => &[b'\t'],
+                (KeyCode::Up, _) => b"\x1b[A",
+                (KeyCode::Down, _) => b"\x1b[B",
+                (KeyCode::Right, _) => b"\x1b[C",
+                (KeyCode::Left, _) => b"\x1b[D",
+                (KeyCode::Char('c'), KeyModifiers::CONTROL) => &[ETX],
+                (KeyCode::Char('d'), KeyModifiers::CONTROL) => &[EOT],
                 (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
                     channel.data(&[c as u8][..]).await?;
                     continue;
