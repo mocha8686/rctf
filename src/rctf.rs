@@ -182,6 +182,20 @@ impl Context {
                             cursor::RestorePosition,
                         )?;
                     }
+                    (KeyCode::Delete, _) => {
+                        if column == cmd.len() {
+                            continue;
+                        }
+
+                        cmd.remove(column);
+                        execute!(
+                            stdout,
+                            cursor::SavePosition,
+                            crossterm::terminal::Clear(ClearType::UntilNewLine),
+                            style::Print(&cmd[column..]),
+                            cursor::RestorePosition,
+                        )?;
+                    }
                     (KeyCode::Up, _) => {
                         if history_index == 0 {
                             continue;
