@@ -2,7 +2,7 @@ use std::io::{self, Write};
 
 use crate::{constants::EOT, ssh::SshSettings, Context};
 use anyhow::Result;
-use clap::{arg, command, Parser, Subcommand};
+use clap::{arg, command, value_parser, Parser, Subcommand};
 use crossterm::{
     cursor,
     event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers},
@@ -29,14 +29,14 @@ enum Command {
     Exit,
     /// SSH into a remote host
     Ssh {
-        /// The destination IP to connect to
-        ip: String,
-        /// The user to connect as
+        /// User to connect as
         username: String,
-        /// The password to authenticate with
-        password: String,
-        /// The port to connect to on the remote host
-        #[arg(short, long, default_value_t = 22)]
+        /// Destination hostname or IP to connect to
+        hostname: String,
+        /// Password to authenticate with
+        password: Option<String>,
+        /// Port to use
+        #[arg(short, long, default_value_t = 22, value_parser = value_parser!(u16).range(1..))]
         port: u16,
     },
 }
@@ -44,6 +44,7 @@ enum Command {
 impl Context {
     pub(crate) async fn start_read_loop(&mut self) -> Result<()> {
         let mut stdout = io::stdout();
+        let mut stderr = io::stderr();
 
         loop {
             execute!(
@@ -58,11 +59,23 @@ impl Context {
                 continue;
             };
 
-            if cmd.split_whitespace().count() == 0 {
-                continue;
-            }
+            let cmd = match shlex::split(&cmd) {
+                None => {
+                    execute!(
+                        stderr,
+                        style::SetForegroundColor(Color::Red),
+                        style::Print("Invalid quoting.\r\n"),
+                        style::ResetColor,
+                    )?;
+                    continue;
+                }
+                Some(cmd) if cmd.is_empty() => {
+                    continue;
+                }
+                Some(cmd) => cmd,
+            };
 
-            let cmd = match Rctf::try_parse_from(["rctf"].into_iter().chain(cmd.split_whitespace()))
+            let cmd = match Rctf::try_parse_from(["rctf".into()].into_iter().chain(cmd.into_iter()))
             {
                 Ok(cmd) => cmd,
                 Err(e) if e.kind() == clap::error::ErrorKind::DisplayHelp => {
@@ -74,7 +87,7 @@ impl Context {
                 Err(e) => {
                     disable_raw_mode()?;
                     execute!(
-                        io::stderr(),
+                        stderr,
                         style::SetForegroundColor(Color::Red),
                         style::Print(e),
                         style::ResetColor,
@@ -92,18 +105,27 @@ impl Context {
                 )?,
                 Command::Exit => break,
                 Command::Ssh {
-                    ip,
                     username,
+                    hostname,
                     password,
                     port,
                 } => {
-                    self.start_ssh(SshSettings {
-                        ip,
-                        port,
-                        username,
-                        password,
-                    })
-                    .await?
+                    if let Err(e) = self
+                        .start_ssh(SshSettings {
+                            hostname,
+                            port,
+                            username,
+                            password: password.unwrap_or("".into()),
+                        })
+                        .await
+                    {
+                        execute!(
+                            stderr,
+                            style::SetForegroundColor(Color::Red),
+                            style::Print(format!("{}\r\n", e)),
+                            style::ResetColor,
+                        )?;
+                    }
                 }
             }
         }

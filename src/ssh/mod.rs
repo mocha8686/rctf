@@ -20,7 +20,7 @@ use self::handler::Handler;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SshSettings {
-    pub(crate) ip: String,
+    pub(crate) hostname: String,
     pub(crate) port: u16,
     pub(crate) username: String,
     pub(crate) password: String,
@@ -84,7 +84,7 @@ impl Context {
     ) -> Result<Handle<Handler>> {
         let config = Arc::new(Config::default());
         let mut session =
-            client::connect(config, (&settings.ip[..], settings.port), handler).await?;
+            client::connect(config, (&settings.hostname[..], settings.port), handler).await?;
         let authenticated = session
             .authenticate_password(&settings.username, &settings.password)
             .await?;
