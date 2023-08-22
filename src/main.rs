@@ -98,7 +98,7 @@ impl client::Handler for Client {
             "Process exited with status.",
             "en",
         );
-        cleanup()?;
+        teardown_terminal()?;
         process::exit(exit_status as i32);
     }
 
@@ -118,12 +118,12 @@ impl client::Handler for Client {
             "en",
         );
         eprintln!("SIG{:?}: {}", signal_name, error_message);
-        cleanup()?;
+        teardown_terminal()?;
         process::exit(1);
     }
 }
 
-fn setup() -> Result<()> {
+fn setup_terminal() -> Result<()> {
     enable_raw_mode()?;
 
     let mut stdout = std::io::stdout();
@@ -148,7 +148,7 @@ fn setup() -> Result<()> {
     Ok(())
 }
 
-fn cleanup() -> Result<()> {
+fn teardown_terminal() -> Result<()> {
     disable_raw_mode()?;
 
     let mut stdout = std::io::stdout();
@@ -208,7 +208,7 @@ impl Context {
             .await?;
         channel.request_shell(true).await?;
 
-        setup()?;
+        setup_terminal()?;
 
         let mut reader = EventStream::new();
         loop {
@@ -252,7 +252,7 @@ impl Context {
         session
             .disconnect(Disconnect::ByApplication, "User exited.", "en")
             .await?;
-        cleanup()?;
+        teardown_terminal()?;
         println!();
 
         Ok(())
