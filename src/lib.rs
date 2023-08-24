@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use anyhow::Result;
 
 pub(crate) mod constants;
+pub mod files;
 pub mod rctf;
 mod ssh;
 pub(crate) mod terminal;
