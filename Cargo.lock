@@ -1223,6 +1223,7 @@ dependencies = [
  "russh",
  "russh-keys",
  "serde",
+ "serde_json",
  "shlex",
  "tokio",
 ]
