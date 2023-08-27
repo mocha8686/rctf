@@ -9,7 +9,7 @@ async fn main() -> Result<()> {
     //     .build()?
     //     .try_deserialize()?;
 
-    let rctf_history = cache::load("history").ok().flatten();
+    let rctf_history = cache::load("history").ok();
 
     let mut context = Context::new(rctf_history)?;
     context.start().await?;

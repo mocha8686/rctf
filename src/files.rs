@@ -9,12 +9,12 @@ pub mod cache {
     use directories::ProjectDirs;
     use serde::{Deserialize, Serialize};
 
-    pub fn load<T>(filename: &str) -> Result<Option<T>>
+    pub fn load<T>(filename: &str) -> Result<T>
     where
         for<'de> T: Deserialize<'de>,
     {
         let Some(path) = create_path(filename) else {
-            return Ok(None);
+            bail!("Failed to create path to {}.", filename);
         };
 
         match File::open(path) {
@@ -22,9 +22,8 @@ pub mod cache {
                 let mut buf = String::new();
                 file.read_to_string(&mut buf)?;
                 let res: T = serde_json::from_str(&buf)?;
-                Ok(Some(res))
+                Ok(res)
             }
-            Err(e) if e.kind() == tokio::io::ErrorKind::NotFound => Ok(None),
             Err(e) => bail!(e),
         }
     }
