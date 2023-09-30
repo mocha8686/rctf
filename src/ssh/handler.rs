@@ -4,18 +4,27 @@ use russh::{
     ChannelId, Disconnect, Sig,
 };
 use russh_keys::key;
-use tokio::{
-    io::{self, AsyncWriteExt},
-    sync::mpsc,
-};
+use tokio::sync::{mpsc, watch};
 
 use super::Exit;
 
-pub(super) struct Handler(Option<mpsc::Sender<Exit>>);
+pub(super) struct Handler {
+    tx_exit: mpsc::Sender<Exit>,
+    tx_stdout: watch::Sender<Vec<u8>>,
+    tx_stderr: watch::Sender<Vec<u8>>,
+}
 
 impl Handler {
-    pub(super) fn new(tx_exit: mpsc::Sender<Exit>) -> Self {
-        Self(Some(tx_exit))
+    pub(super) fn new(
+        tx_exit: mpsc::Sender<Exit>,
+        tx_stdout: watch::Sender<Vec<u8>>,
+        tx_stderr: watch::Sender<Vec<u8>>,
+    ) -> Self {
+        Self {
+            tx_exit,
+            tx_stdout,
+            tx_stderr,
+        }
     }
 }
 
@@ -36,9 +45,7 @@ impl RusshHandler for Handler {
         data: &[u8],
         session: Session,
     ) -> core::result::Result<(Self, Session), Self::Error> {
-        let mut stdout = io::stdout();
-        stdout.write_all(data).await?;
-        stdout.flush().await?;
+        self.tx_stdout.send(data.to_vec())?;
         Ok((self, session))
     }
 
@@ -49,9 +56,7 @@ impl RusshHandler for Handler {
         data: &[u8],
         session: Session,
     ) -> core::result::Result<(Self, Session), Self::Error> {
-        let mut stderr = io::stderr();
-        stderr.write_all(data).await?;
-        stderr.flush().await?;
+        self.tx_stderr.send(data.to_vec())?;
         Ok((self, session))
     }
 
@@ -67,11 +72,7 @@ impl RusshHandler for Handler {
             "Process exited with status.",
             "en",
         );
-        self.0
-            .take()
-            .unwrap()
-            .send(Exit::Status(exit_status))
-            .await?;
+        self.tx_exit.send(Exit::Status(exit_status)).await.ok();
         Ok((self, session))
     }
 
@@ -90,11 +91,10 @@ impl RusshHandler for Handler {
             "Process exited with signal.",
             "en",
         );
-        self.0
-            .take()
-            .unwrap()
+        self.tx_exit
             .send(Exit::Signal(signal_name, error_message.to_string()))
-            .await?;
+            .await
+            .ok();
         Ok((self, session))
     }
 }

@@ -1,29 +1,43 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use anyhow::Result;
+use session::SessionManager;
 
+pub(crate) mod commands;
 pub(crate) mod constants;
 pub mod files;
+pub(crate) mod input;
 pub mod rctf;
+mod session;
 mod ssh;
+mod termcraft;
 pub(crate) mod terminal;
+pub(crate) mod util;
 
-#[derive(Clone, Debug, Default)]
+pub type CommandHistory = VecDeque<String>;
+
 pub struct Context {
     supports_keyboard_enhancement: bool,
-    rctf_history: VecDeque<String>,
+    sessions: SessionManager,
+    named_sessions: HashMap<String, usize>,
+    variables: HashMap<String, String>,
+    rctf_history: CommandHistory,
+    termcraft_history: CommandHistory,
 }
 
 impl Context {
-    pub fn new(rctf_history: Option<VecDeque<String>>) -> Result<Self> {
+    pub fn new(
+        rctf_history: Option<CommandHistory>,
+        termcraft_history: Option<CommandHistory>,
+    ) -> Result<Self> {
         Ok(Self {
             supports_keyboard_enhancement: crossterm::terminal::supports_keyboard_enhancement()?,
+            sessions: SessionManager::new(), // TODO: restore sessions from files
+            named_sessions: HashMap::new(),
+            variables: HashMap::new(), // TODO: restore variables from files
             rctf_history: rctf_history.unwrap_or_default(),
+            termcraft_history: termcraft_history.unwrap_or_default(),
         })
-    }
-
-    pub fn rctf_history(&self) -> &VecDeque<String> {
-        &self.rctf_history
     }
 
     pub async fn start(&mut self) -> Result<()> {
@@ -31,5 +45,13 @@ impl Context {
         let res = self.start_read_loop().await;
         terminal::teardown(self.supports_keyboard_enhancement)?;
         res
+    }
+
+    pub fn rctf_history(&self) -> &CommandHistory {
+        &self.rctf_history
+    }
+
+    pub fn termcraft_history(&self) -> &CommandHistory {
+        &self.termcraft_history
     }
 }

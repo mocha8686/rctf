@@ -14,9 +14,12 @@ crossterm = { version = "0.27.0", features = ["event-stream"] }
 directories = "5.0.1"
 futures = "0.3.28"
 itertools = "0.11.0"
+lazy_static = "1.4.0"
+pcre2 = "0.2.4"
 russh = "0.38.0"
 russh-keys = "0.38.0"
 serde = { version = "1.0.183", features = ["derive"] }
 serde_json = "1.0.105"
 shlex = "1.1.0"
+tabled = "0.14.0"
 tokio = { version = "1.32.0", features = ["full"] }

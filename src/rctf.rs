@@ -1,31 +1,24 @@
-mod input;
-
-use std::io::{self, Write};
-
-use crate::{ssh::SshSettings, Context};
+use crate::{
+    commands::Command,
+    session::{SessionSelection, SessionType},
+    ssh::SshSettings,
+    terminal::{eprintln_colored, println},
+    util::base_table,
+    Context,
+};
 use anyhow::Result;
 use clap::{arg, command, value_parser, Parser, Subcommand};
-use crossterm::{
-    cursor, execute,
-    style::{self, Color},
-    terminal::{disable_raw_mode, enable_raw_mode, ClearType},
-};
+use crossterm::style::Color;
 
-#[derive(Parser)]
-#[command(author, version, about, long_about = None)]
-#[command(propagate_version = true)]
+#[derive(Debug, Parser)]
+#[command()]
 struct Rctf {
     #[command(subcommand)]
-    command: Command,
+    command: RctfCommand,
 }
 
-#[derive(Subcommand)]
-enum Command {
-    /// Clear the terminal
-    Clear,
-    /// Exit the program
-    #[command(aliases = ["quit", "q"])]
-    Exit,
+#[derive(Debug, Subcommand)]
+enum RctfCommand {
     /// SSH into a remote host
     Ssh {
         /// User to connect as
@@ -33,98 +26,95 @@ enum Command {
         /// Destination hostname or IP to connect to
         hostname: String,
         /// Password to authenticate with
+        #[arg(long)]
         password: Option<String>,
         /// Port to use
         #[arg(short, long, default_value_t = 22, value_parser = value_parser!(u16).range(1..))]
         port: u16,
     },
+    /// List or use sessions
+    #[group(required = false)]
+    // TODO: https://docs.rs/clap/latest/clap/_derive/_cookbook/git/index.html
+    Session {
+        /// Name of the session to resume
+        name: Option<String>,
+        /// Index of the session to resume
+        index: Option<usize>,
+    },
+
+    #[command(flatten)]
+    Command(Command),
 }
 
 impl Context {
     pub(crate) async fn start_read_loop(&mut self) -> Result<()> {
-        let mut stdout = io::stdout();
-        let mut stderr = io::stderr();
+        const PROMPT: &str = env!("CARGO_PKG_NAME");
 
         loop {
-            execute!(
-                stdout,
-                style::SetForegroundColor(Color::Blue),
-                style::Print("rctf"),
-                style::ResetColor,
-                style::Print("> "),
-            )?;
+            let mut new_history = self.rctf_history.clone();
+            let res = self.get_next_command(PROMPT, &mut new_history).await;
+            self.rctf_history = new_history;
 
-            let Some(cmd) = self.get_next_command().await? else {
-                continue;
-            };
-
-            let cmd = match shlex::split(&cmd) {
-                None => {
-                    execute!(
-                        stderr,
-                        style::SetForegroundColor(Color::Red),
-                        style::Print("Invalid quoting.\r\n"),
-                        style::ResetColor,
-                    )?;
-                    continue;
-                }
-                Some(cmd) if cmd.is_empty() => {
-                    continue;
-                }
-                Some(cmd) => cmd,
-            };
-
-            let cmd = match Rctf::try_parse_from(["rctf".into()].into_iter().chain(cmd)) {
+            let cmd: Rctf = match res {
                 Ok(cmd) => cmd,
-                Err(e) if e.kind() == clap::error::ErrorKind::DisplayHelp => {
-                    disable_raw_mode()?;
-                    write!(stdout, "{}", e)?;
-                    enable_raw_mode()?;
-                    continue;
-                }
                 Err(e) => {
-                    disable_raw_mode()?;
-                    execute!(
-                        stderr,
-                        style::SetForegroundColor(Color::Red),
-                        style::Print(e),
-                        style::ResetColor,
-                    )?;
-                    enable_raw_mode()?;
+                    eprintln_colored(e, Color::Red)?;
                     continue;
                 }
             };
 
             match cmd.command {
-                Command::Clear => execute!(
-                    stdout,
-                    crossterm::terminal::Clear(ClearType::All),
-                    cursor::MoveTo(0, 0)
-                )?,
-                Command::Exit => break,
-                Command::Ssh {
+                RctfCommand::Ssh {
                     username,
                     hostname,
                     password,
                     port,
                 } => {
                     if let Err(e) = self
-                        .start_ssh(SshSettings {
+                        .start_session(SessionType::Ssh(SshSettings {
                             hostname,
                             port,
                             username,
                             password: password.unwrap_or(String::new()),
-                        })
+                        }))
                         .await
                     {
-                        execute!(
-                            stderr,
-                            style::SetForegroundColor(Color::Red),
-                            style::Print(format!("{}\r\n", e)),
-                            style::ResetColor,
-                        )?;
+                        eprintln_colored(e, Color::Red)?;
                     }
                 }
+                RctfCommand::Session { name, index } => {
+                    if let Err(e) = self.handle_session_command(name, index).await {
+                        eprintln_colored(e, Color::Red)?;
+                    }
+                }
+                RctfCommand::Command(Command::Exit) => break,
+                RctfCommand::Command(command) => {
+                    if let Err(e) = self.handle_command(command).await {
+                        eprintln_colored(e, Color::Red)?;
+                    }
+                }
+            };
+        }
+
+        Ok(())
+    }
+
+    async fn handle_session_command(
+        &mut self,
+        name: Option<String>,
+        index: Option<usize>,
+    ) -> Result<()> {
+        if let Some(name) = name {
+            self.resume_session(SessionSelection::Name(name)).await?;
+        } else if let Some(index) = index {
+            self.resume_session(SessionSelection::Index(index)).await?;
+        } else {
+            if self.sessions.is_empty() {
+                eprintln_colored("There are currently no sessions.", Color::Red)?;
+            } else {
+                println(base_table(
+                    self.sessions.iter().flatten().map(|item| item.as_ref()),
+                ))?;
             }
         }
 

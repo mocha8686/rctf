@@ -43,7 +43,8 @@ pub mod cache {
     }
 
     fn create_path(filename: &str) -> Option<PathBuf> {
-        let Some(dir) = ProjectDirs::from("", "", "rctf").map(|dir| dir.cache_dir().to_owned())
+        let Some(dir) =
+            ProjectDirs::from("", "", env!("CARGO_PKG_NAME")).map(|dir| dir.cache_dir().to_owned())
         else {
             return None;
         };

@@ -1,20 +1,25 @@
-mod handler;
-
 use std::{fmt::Display, sync::Arc};
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Result, anyhow};
+use async_trait::async_trait;
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use futures::StreamExt;
 use russh::{
     client::{self, Config, Handle, Msg},
     Channel, Disconnect, Pty, Sig,
 };
-use tokio::{select, sync::mpsc};
+use tokio::{
+    io::AsyncWriteExt,
+    select,
+    sync::{mpsc, watch},
+};
 
 use crate::{
     constants::{BACKSPACE, EOT, ETX},
-    Context,
+    session::{Session, SessionExit},
 };
+
+mod handler;
 
 use self::handler::Handler;
 
@@ -32,6 +37,17 @@ enum Exit {
     Signal(Sig, String),
 }
 
+enum Status {
+    Disconnected,
+    Connected {
+        session: Handle<Handler>,
+        channel: Channel<Msg>,
+        rx_exit: mpsc::Receiver<Exit>,
+        rx_stdout: watch::Receiver<Vec<u8>>,
+        rx_stderr: watch::Receiver<Vec<u8>>,
+    },
+}
+
 impl Display for Exit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -43,10 +59,58 @@ impl Display for Exit {
     }
 }
 
-impl Context {
-    pub(crate) async fn start_ssh(&mut self, settings: SshSettings) -> Result<()> {
+pub(crate) struct SshSession {
+    hostname: String,
+    port: u16,
+    username: String,
+    password: String,
+    status: Status,
+    name: String,
+    index: usize,
+}
+
+impl SshSession {
+    pub(crate) fn new(settings: SshSettings, index: usize) -> Self {
+        Self {
+            hostname: settings.hostname,
+            port: settings.port,
+            username: settings.username,
+            password: settings.password,
+            status: Status::Disconnected,
+            name: String::new(),
+            index,
+        }
+    }
+
+    async fn create_session(&self, handler: Handler) -> Result<Handle<Handler>> {
+        let config = Arc::new(Config::default());
+        let mut session = client::connect(config, (&self.hostname[..], self.port), handler).await?;
+        let authenticated = session
+            .authenticate_password(&self.username, &self.password)
+            .await?;
+
+        if !authenticated {
+            bail!("Failed to authenticate.");
+        }
+
+        Ok(session)
+    }
+}
+
+#[async_trait]
+impl Session for SshSession {
+    fn type_name(&self) -> &'static str {
+        "Ssh"
+    }
+
+    async fn connect(&mut self) -> Result<()> {
         let (tx_exit, rx_exit) = mpsc::channel(1);
-        let session = self.create_session(Handler::new(tx_exit), settings).await?;
+        let (tx_stdout, rx_stdout) = watch::channel(vec![]);
+        let (tx_stderr, rx_stderr) = watch::channel(vec![]);
+
+        let session = self
+            .create_session(Handler::new(tx_exit, tx_stdout, tx_stderr))
+            .await?;
         let mut channel = session.channel_open_session().await?;
         channel
             .request_pty(
@@ -66,47 +130,67 @@ impl Context {
             .await?;
         channel.request_shell(true).await?;
 
-        self.start_ssh_read_loop(&mut channel, rx_exit).await?;
-
-        channel.eof().await?;
-        session
-            .disconnect(Disconnect::ByApplication, "User exited.", "en")
-            .await?;
-        println!();
+        self.status = Status::Connected {
+            session,
+            channel,
+            rx_exit,
+            rx_stdout,
+            rx_stderr,
+        };
 
         Ok(())
     }
 
-    async fn create_session(
-        &self,
-        handler: Handler,
-        settings: SshSettings,
-    ) -> Result<Handle<Handler>> {
-        let config = Arc::new(Config::default());
-        let mut session =
-            client::connect(config, (&settings.hostname[..], settings.port), handler).await?;
-        let authenticated = session
-            .authenticate_password(&settings.username, &settings.password)
-            .await?;
+    async fn start_read_loop(&mut self) -> Result<SessionExit> {
+        let Status::Connected {
+            ref mut channel,
+            ref mut rx_exit,
+            ref rx_stdout,
+            ref rx_stderr,
+            ..
+        } = self.status
+        else {
+            bail!("Cannot start read loop before connecting");
+        };
 
-        if !authenticated {
-            bail!("Failed to authenticate.");
-        }
+        let print_loop_handle = {
+            let mut rx_stdout = rx_stdout.clone();
+            let mut rx_stderr = rx_stderr.clone();
 
-        Ok(session)
-    }
+            tokio::spawn(async move {
+                loop {
+                    select! {
+                        res = rx_stdout.changed() => {
+                            if let Err(_) = res {
+                                break;
+                            }
 
-    async fn start_ssh_read_loop(
-        &self,
-        channel: &mut Channel<Msg>,
-        mut rx_exit: mpsc::Receiver<Exit>,
-    ) -> Result<()> {
+                            let msg = rx_stdout.borrow_and_update().clone();
+                            let mut stdout = tokio::io::stdout();
+                            stdout.write(&msg).await.ok();
+                            stdout.flush().await.ok();
+                        }
+                        res = rx_stderr.changed() => {
+                            if let Err(_) = res {
+                                break;
+                            }
+
+                            let msg = rx_stdout.borrow_and_update().clone();
+                            let mut stderr = tokio::io::stderr();
+                            stderr.write(&msg).await.ok();
+                            stderr.flush().await.ok();
+                        }
+                    }
+                }
+            })
+        };
+
         let mut reader = EventStream::new();
-        loop {
+        let res = loop {
             select! {
                 event = reader.next() => {
                     let Some(event) = event else {
-                        return Ok(());
+                        bail!("Out of events.");
                     };
 
                     if let Event::Key(KeyEvent {
@@ -117,7 +201,7 @@ impl Context {
                     }) = event?
                     {
                         let data: &[u8] = match (code, modifiers) {
-                            (KeyCode::Esc, _) => return Ok(()),
+                            (KeyCode::Esc, _) => break Ok(SessionExit::Termcraft),
                             (KeyCode::Enter, _) => &[b'\n'],
                             (KeyCode::Backspace, _) => &[BACKSPACE],
                             (KeyCode::Tab, _) => &[b'\t'],
@@ -138,15 +222,85 @@ impl Context {
                 }
                 exit = rx_exit.recv() => {
                     let Some(exit) = exit else {
-                        bail!("Failed to get exit status.");
+                        break Err(anyhow!("Failed to get exit status."));
                     };
                     if let Exit::Status(0) = exit {
-                        return Ok(());
+                        break Ok(SessionExit::Exit);
                     }
 
-                    bail!(exit);
+                    break Err(anyhow!(exit));
                 }
             }
+        };
+
+        print_loop_handle.abort();
+        print_loop_handle.await.ok();
+
+        res
+    }
+
+    async fn reset_prompt(&mut self) -> Result<()> {
+        let Status::Connected {
+            ref mut channel,
+            ref mut rx_stdout,
+            ref mut rx_stderr,
+            ..
+        } = self.status
+        else {
+            bail!("Cannot send data before connecting");
+        };
+        channel.data(&[ETX][..]).await?;
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        rx_stdout.borrow_and_update();
+        rx_stderr.borrow_and_update();
+        Ok(())
+    }
+
+    async fn send(&mut self, data: &[u8]) -> Result<()> {
+        let Status::Connected {
+            ref mut channel, ..
+        } = self.status
+        else {
+            bail!("Cannot send data before connecting");
+        };
+        channel.data(data).await?;
+        Ok(())
+    }
+
+    async fn disconnect(&mut self) -> Result<()> {
+        let Status::Connected {
+            ref session,
+            ref mut channel,
+            ..
+        } = self.status
+        else {
+            return Ok(());
+        };
+
+        channel.eof().await?;
+        session
+            .disconnect(Disconnect::ByApplication, "User exited.", "en")
+            .await?;
+        println!();
+
+        self.status = Status::Disconnected;
+
+        Ok(())
+    }
+
+    fn name(&self) -> Option<&str> {
+        if self.name.is_empty() {
+            None
+        } else {
+            Some(&self.name)
         }
+    }
+
+    fn name_mut(&mut self) -> &mut String {
+        &mut self.name
+    }
+
+    fn index(&self) -> usize {
+        self.index
     }
 }

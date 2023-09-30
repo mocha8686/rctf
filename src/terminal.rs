@@ -1,9 +1,12 @@
-use std::io::Write;
+#![allow(dead_code)]
+
+use std::{fmt::Display, io::Write};
 
 use anyhow::Result;
 use crossterm::{
     event::{self, KeyboardEnhancementFlags},
     execute, queue,
+    style::{self, Color},
     terminal::{disable_raw_mode, enable_raw_mode},
 };
 
@@ -48,6 +51,44 @@ pub fn teardown(supports_keyboard_enhancement: bool) -> Result<()> {
         event::DisableFocusChange,
         event::DisableMouseCapture,
     )?;
+
+    Ok(())
+}
+
+pub fn println<T: Display>(item: T) -> Result<()> {
+    println_helper(&mut std::io::stdout(), item, None)
+}
+
+pub fn println_colored<T: Display>(item: T, color: Color) -> Result<()> {
+    println_helper(&mut std::io::stdout(), item, Some(color))
+}
+
+pub fn eprintln<T: Display>(item: T) -> Result<()> {
+    println_helper(&mut std::io::stderr(), item, None)
+}
+
+pub fn eprintln_colored<T: Display>(item: T, color: Color) -> Result<()> {
+    println_helper(&mut std::io::stderr(), item, Some(color))
+}
+
+fn println_helper<T, W>(writer: &mut W, item: T, color: Option<Color>) -> Result<()>
+where
+    W: Write,
+    T: Display,
+{
+    disable_raw_mode()?;
+    if let Some(color) = color {
+        execute!(
+            writer,
+            style::SetForegroundColor(color),
+            style::Print(item),
+            style::ResetColor,
+            style::Print("\n"),
+        )?;
+    } else {
+        execute!(writer, style::Print(item), style::Print("\n"))?;
+    }
+    enable_raw_mode()?;
 
     Ok(())
 }
