@@ -14,7 +14,7 @@ pub enum TermcraftResponse {
 }
 
 #[derive(Debug, Parser)]
-#[command()]
+#[command(multicall = true)]
 struct Termcraft {
     #[command(subcommand)]
     command: TermcraftCommands,
