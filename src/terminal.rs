@@ -4,10 +4,7 @@ use std::{fmt::Display, io::Write};
 
 use anyhow::Result;
 use crossterm::{
-    event::{self, KeyboardEnhancementFlags},
-    execute, queue,
-    style::{self, Color},
-    terminal::{disable_raw_mode, enable_raw_mode},
+    cursor, event::{self, KeyboardEnhancementFlags}, execute, queue, style::{self, Color}, terminal::{disable_raw_mode, enable_raw_mode}
 };
 
 pub fn setup(supports_keyboard_enhancement: bool) -> Result<()> {
@@ -72,19 +69,22 @@ pub fn eprintln_colored<T: Display>(item: T, color: Color) -> Result<()> {
 }
 
 fn println_helper<T: Display, W: Write>(writer: &mut W, item: T, color: Option<Color>) -> Result<()> {
-    disable_raw_mode()?;
     if let Some(color) = color {
-        execute!(
+        queue!(
             writer,
             style::SetForegroundColor(color),
-            style::Print(item),
-            style::ResetColor,
-            style::Print("\n"),
         )?;
-    } else {
-        execute!(writer, style::Print(item), style::Print("\n"))?;
     }
-    enable_raw_mode()?;
+
+    for line in item.to_string().split('\n') {
+        queue!(writer, style::Print(line), cursor::MoveToNextLine(1))?;
+    }
+
+    if color.is_some() {
+        queue!(writer, style::ResetColor)?;
+    }
+
+    execute!(writer, cursor::MoveToNextLine(1))?;
 
     Ok(())
 }
