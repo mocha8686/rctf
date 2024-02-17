@@ -19,10 +19,10 @@ impl<'a> Context<'a> {
         &self,
         prompt: &str,
         history: &mut CommandHistory,
-    ) -> Result<P> {
+    ) -> Result<Option<P>> {
         loop {
             let Some(next_line) = get_next_line(prompt, history).await? else {
-                continue;
+                return Ok(None);
             };
 
             let next_line = self.parse_line(&next_line)?;
@@ -54,7 +54,7 @@ impl<'a> Context<'a> {
                 }
             };
 
-            return Ok(cmd);
+            return Ok(Some(cmd));
         }
     }
 
@@ -115,7 +115,11 @@ async fn get_next_line(prompt: &str, history: &mut CommandHistory) -> Result<Opt
             match (code, modifiers) {
                 (KeyCode::Esc, _) => {
                     write!(stdout, "\r\n")?;
-                    return Ok(Some("exit".to_string()));
+                    return Ok(None);
+                }
+                (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                    write!(stdout, "^C\r\n")?;
+                    return Ok(None);
                 }
                 (KeyCode::Enter, _) => {
                     write!(stdout, "\r\n")?;
@@ -203,10 +207,6 @@ async fn get_next_line(prompt: &str, history: &mut CommandHistory) -> Result<Opt
 
                     column += 1;
                     execute!(stdout, cursor::MoveRight(1),)?;
-                }
-                (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                    write!(stdout, "^C\r\n")?;
-                    return Ok(None);
                 }
                 (KeyCode::Char(c), KeyModifiers::NONE | KeyModifiers::SHIFT) => {
                     cmd.insert(column, c);

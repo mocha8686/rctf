@@ -57,7 +57,8 @@ impl<'a> Context<'a> {
             self.rctf_history = new_history;
 
             let cmd: Rctf = match res {
-                Ok(cmd) => cmd,
+                Ok(Some(cmd)) => cmd,
+                Ok(None) => Rctf { command: RctfCommands::Command(Commands::Exit) },
                 Err(e) => {
                     eprintln_colored(e, Color::Red)?;
                     continue;

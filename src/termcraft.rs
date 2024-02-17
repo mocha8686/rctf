@@ -67,7 +67,8 @@ impl<'a> Context<'a> {
             self.termcraft_history = new_history;
 
             let cmd: Termcraft = match res {
-                Ok(cmd) => cmd,
+                Ok(Some(cmd)) => cmd,
+                Ok(None) => Termcraft { command: TermcraftCommands::Command(Commands::Exit) },
                 Err(e) => {
                     eprintln_colored(e, Color::Red)?;
                     continue;
