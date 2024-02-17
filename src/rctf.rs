@@ -105,7 +105,7 @@ impl<'a> Context<'a> {
         } else if let Some(index) = index {
             self.resume_session(SessionSelection::Index(index)).await?;
         } else {
-            if self.sessions.is_empty() {
+            if self.sessions.iter().all(|s| s.is_none()) {
                 println("There are currently no sessions.")?;
             } else {
                 let mut table = Table::builder(
