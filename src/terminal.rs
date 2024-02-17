@@ -71,11 +71,7 @@ pub fn eprintln_colored<T: Display>(item: T, color: Color) -> Result<()> {
     println_helper(&mut std::io::stderr(), item, Some(color))
 }
 
-fn println_helper<T, W>(writer: &mut W, item: T, color: Option<Color>) -> Result<()>
-where
-    W: Write,
-    T: Display,
-{
+fn println_helper<T: Display, W: Write>(writer: &mut W, item: T, color: Option<Color>) -> Result<()> {
     disable_raw_mode()?;
     if let Some(color) = color {
         execute!(

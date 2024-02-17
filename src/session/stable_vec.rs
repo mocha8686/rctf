@@ -79,16 +79,13 @@ where
     }
 }
 
-impl<T> PartialEq for StableVec<T>
-where
-    T: PartialEq,
-{
+impl<T: PartialEq> PartialEq for StableVec<T> {
     fn eq(&self, other: &Self) -> bool {
         self.items == other.items
     }
 }
 
-impl<T> Eq for StableVec<T> where T: Eq {}
+impl<T: Eq> Eq for StableVec<T> {}
 
 #[cfg(test)]
 mod tests {

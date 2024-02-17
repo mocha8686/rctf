@@ -26,14 +26,11 @@ lazy_static! {
 }
 
 impl Context {
-    pub(crate) async fn get_next_command<P>(
+    pub(crate) async fn get_next_command<P: Parser>(
         &self,
         prompt: &str,
         history: &mut CommandHistory,
-    ) -> Result<P>
-    where
-        P: Parser,
-    {
+    ) -> Result<P> {
         loop {
             let Some(next_line) = get_next_line(prompt, history).await? else {
                 continue;

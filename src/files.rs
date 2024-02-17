@@ -28,10 +28,7 @@ pub mod cache {
         }
     }
 
-    pub fn save<T>(filename: &str, data: T) -> Result<()>
-    where
-        T: Serialize,
-    {
+    pub fn save<T: Serialize>(filename: &str, data: T) -> Result<()> {
         let Some(path) = create_path(filename) else {
             bail!("Failed to get cache directory.");
         };
