@@ -8,7 +8,7 @@ use crate::{terminal::eprintln_colored, terminal::println, util::base_table_sett
 // TODO: https://docs.rs/clap/latest/clap/_cookbook/repl/index.html
 
 #[derive(Debug, Parser)]
-#[command()]
+#[command(multicall = true)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
@@ -35,23 +35,19 @@ pub enum Commands {
 impl Context {
     pub async fn handle_command(&mut self, command: Commands) -> Result<()> {
         match command {
-            Command::Clear => execute!(
+            Commands::Clear => execute!(
                 std::io::stdout(),
                 crossterm::terminal::Clear(ClearType::All),
                 cursor::MoveTo(0, 0)
             )?,
-            Command::Var { name, value } => self.handle_variable_command(name, value).await?,
-            Command::Exit => {}
+            Commands::Var { name, value } => self.variable(name, value).await?,
+            Commands::Exit => {}
         };
 
         Ok(())
     }
 
-    async fn handle_variable_command(
-        &mut self,
-        name: Option<String>,
-        value: Option<String>,
-    ) -> Result<()> {
+    async fn variable(&mut self, name: Option<String>, value: Option<String>) -> Result<()> {
         if let Some(name) = name {
             if let Some(value) = value {
                 self.variables.insert(name.clone(), value);

@@ -11,19 +11,8 @@ use crossterm::{
     terminal::{self, ClearType},
 };
 use futures::StreamExt;
-use lazy_static::lazy_static;
-use pcre2::bytes::Regex;
 
 pub const MAX_HISTORY_SIZE: usize = 100;
-
-lazy_static! {
-    // https://regex101.com/r/BsuPom/1
-    static ref VARIABLE_REGEX: Regex =
-        Regex::new(r"(?<!(?<!\\)\\)(?:#([A-Za-z]\w*)|#\{([A-Za-z]\w*)\})").unwrap();
-
-    // https://regex101.com/r/oTfnpy/1
-    static ref BYTES_REGEX: Regex = Regex::new(r"(?<!\\)\\(x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4})").unwrap();
-}
 
 impl Context {
     pub async fn get_next_command<P: Parser>(
@@ -36,7 +25,7 @@ impl Context {
                 continue;
             };
 
-            let next_line = self.expand(&next_line)?;
+            let next_line = self.parse_line(&next_line)?;
 
             let args = match shlex::split(&next_line) {
                 None => {
@@ -54,7 +43,7 @@ impl Context {
                 Some(args) => args,
             };
 
-            let cmd = match P::try_parse_from([prompt.into()].into_iter().chain(args)) {
+            let cmd = match P::try_parse_from(args) {
                 Ok(cmd) => cmd,
                 Err(e) if e.kind() == clap::error::ErrorKind::DisplayHelp => {
                     println(e)?;
@@ -70,58 +59,17 @@ impl Context {
     }
 
     pub fn parse_line(&self, input: &str) -> Result<String> {
+        // TODO: implement
+
         // `\n`        new line
         // `\r`        carriage return
         // `\t`        horizontal tab
-        let special_chars = input
-            .replace("\\n", "\n")
-            .replace("\\r", "\r")
-            .replace("\\t", "\t");
-
         // variables
-        // `\#`        hashtag
-        let mut expanded_variables = String::new();
-        let mut last_match = 0;
-        for res in VARIABLE_REGEX.captures_iter(special_chars.as_bytes()) {
-            let cap = res?;
-            let capture_match = cap.get(0).unwrap();
-            let variable_name =
-                std::str::from_utf8(cap.get(1).unwrap_or_else(|| cap.get(2).unwrap()).as_bytes())?;
-            let Some(value) = self.variables.get(variable_name) else {
-                bail!(format!("Variable {variable_name} is not defined."));
-            };
-
-            expanded_variables.push_str(&special_chars[last_match..capture_match.start()]);
-            expanded_variables.push_str(&self.expand(value)?);
-            last_match = capture_match.end();
-        }
-        expanded_variables.push_str(&special_chars[last_match..]);
-
         // double backslash
-        // `\\`        backslash
-        Ok(expanded_variables.replace(r"\\", r"\"))
+
+        Ok(input.to_owned())
     }
 }
-
-// fn parse_byte_escape_string(input: &str) -> Result<Vec<u8>> {
-//     TODO: ignore double backslashes
-//
-//     let data = &input[1..];
-//     match input.chars().next().unwrap() {
-//         'x' => {
-//             let byte = u8::from_str_radix(data, 16)?;
-//             Ok(vec![byte])
-//         }
-//         'u' => {
-//             let codepoint = u8::from_str_radix(data, 16)?;
-//             let codepoint = &[codepoint];
-//
-//             let codepoint_string = std::str::from_utf8(codepoint)?;
-//             Ok(codepoint_string.bytes().collect_vec())
-//         }
-//         _ => bail!("Invalid byte escape"),
-//     }
-// }
 
 fn print_prompt(prompt: &str) -> Result<()> {
     let mut stdout = io::stdout();
@@ -281,5 +229,5 @@ async fn get_next_line(prompt: &str, history: &mut CommandHistory) -> Result<Opt
     while history.len() > MAX_HISTORY_SIZE {
         history.pop_front();
     }
-    Ok(Some((*cmd).to_string()))
+    Ok(Some(cmd.to_string()))
 }

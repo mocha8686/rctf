@@ -1,7 +1,7 @@
 use crate::{
-    commands::Command,
     session::{SessionSelection, SessionType},
     ssh::SshSettings,
+    commands::Commands,
     terminal::{eprintln_colored, println},
     util::base_table,
     Context,
@@ -10,15 +10,16 @@ use anyhow::Result;
 use clap::{arg, command, value_parser, Parser, Subcommand};
 use crossterm::style::Color;
 
+// TODO: https://docs.rs/clap/latest/clap/_cookbook/repl_derive/index.html
 #[derive(Debug, Parser)]
-#[command()]
+#[command(multicall = true)]
 struct Rctf {
     #[command(subcommand)]
-    command: RctfCommand,
+    command: RctfCommands,
 }
 
 #[derive(Debug, Subcommand)]
-enum RctfCommand {
+enum RctfCommands {
     /// SSH into a remote host
     Ssh {
         /// User to connect as
@@ -34,7 +35,6 @@ enum RctfCommand {
     },
     /// List or use sessions
     #[group(required = false)]
-    // TODO: https://docs.rs/clap/latest/clap/_derive/_cookbook/git/index.html
     Session {
         /// Name of the session to resume
         name: Option<String>,
@@ -43,7 +43,7 @@ enum RctfCommand {
     },
 
     #[command(flatten)]
-    Command(Command),
+    Command(Commands),
 }
 
 impl Context {
@@ -64,7 +64,7 @@ impl Context {
             };
 
             match cmd.command {
-                RctfCommand::Ssh {
+                RctfCommands::Ssh {
                     username,
                     hostname,
                     password,
@@ -82,13 +82,13 @@ impl Context {
                         eprintln_colored(e, Color::Red)?;
                     }
                 }
-                RctfCommand::Session { name, index } => {
-                    if let Err(e) = self.handle_session_command(name, index).await {
+                RctfCommands::Session { name, index } => {
+                    if let Err(e) = self.session(name, index).await {
                         eprintln_colored(e, Color::Red)?;
                     }
                 }
-                RctfCommand::Command(Command::Exit) => break,
-                RctfCommand::Command(command) => {
+                RctfCommands::Command(Commands::Exit) => break,
+                RctfCommands::Command(command) => {
                     if let Err(e) = self.handle_command(command).await {
                         eprintln_colored(e, Color::Red)?;
                     }
@@ -99,11 +99,7 @@ impl Context {
         Ok(())
     }
 
-    async fn handle_session_command(
-        &mut self,
-        name: Option<String>,
-        index: Option<usize>,
-    ) -> Result<()> {
+    async fn session(&mut self, name: Option<String>, index: Option<usize>) -> Result<()> {
         if let Some(name) = name {
             self.resume_session(SessionSelection::Name(name)).await?;
         } else if let Some(index) = index {

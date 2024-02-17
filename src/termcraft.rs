@@ -1,5 +1,5 @@
 use crate::{
-    commands::Command,
+    commands::Commands,
     terminal::{eprintln_colored, println},
     Context,
 };
@@ -17,12 +17,12 @@ pub enum TermcraftResponse {
 #[command()]
 struct Termcraft {
     #[command(subcommand)]
-    command: TermcraftCommand,
+    command: TermcraftCommands,
 }
 
 // TODO: base64, hex, xor, etc.
 #[derive(Debug, Subcommand)]
-enum TermcraftCommand {
+enum TermcraftCommands {
     /// Send current session to background
     #[command(alias = "background")]
     Bg,
@@ -50,7 +50,7 @@ enum TermcraftCommand {
     },
 
     #[command(flatten)]
-    Command(Command),
+    Command(Commands),
 }
 
 impl Context {
@@ -75,8 +75,8 @@ impl Context {
             };
 
             match cmd.command {
-                TermcraftCommand::Bg => return Ok(TermcraftResponse::Background),
-                TermcraftCommand::Name { name } => {
+                TermcraftCommands::Bg => return Ok(TermcraftResponse::Background),
+                TermcraftCommands::Name { name } => {
                     if let Some(name) = name {
                         *self.sessions.get_mut(session_index).unwrap().name_mut() = name.clone();
                         self.named_sessions.insert(name, session_index);
@@ -89,8 +89,8 @@ impl Context {
                             .unwrap_or("This session is currently unnamed."),
                     )?;
                 }
-                TermcraftCommand::Printf { format_string } => {
-                    let cmd = match self.expand(&format_string) {
+                TermcraftCommands::Printf { format_string } => {
+                    let cmd = match self.parse_line(&format_string) {
                         Ok(cmd) => cmd,
                         Err(e) => {
                             eprintln_colored(e, Color::Red)?;
@@ -99,8 +99,8 @@ impl Context {
                     };
                     return Ok(TermcraftResponse::Cmd(cmd));
                 }
-                TermcraftCommand::Command(Command::Exit) => return Ok(TermcraftResponse::Exit),
-                TermcraftCommand::Command(command) => self.handle_command(command).await?,
+                TermcraftCommands::Command(Commands::Exit) => return Ok(TermcraftResponse::Exit),
+                TermcraftCommands::Command(command) => self.handle_command(command).await?,
             }
         }
     }
