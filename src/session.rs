@@ -1,9 +1,5 @@
-use std::borrow::Cow;
-
 use anyhow::{bail, Result};
 use async_trait::async_trait;
-use tabled::Tabled;
-
 
 use crate::{termcraft::TermcraftResponse, terminal::println, Context};
 
@@ -124,24 +120,5 @@ impl<'a> Context<'a> {
         }
 
         Ok(())
-    }
-
-impl Tabled for &dyn Session {
-    const LENGTH: usize = 3;
-
-    fn fields(&self) -> Vec<Cow<'_, str>> {
-        [
-            self.index().to_string(),
-            self.type_name().to_string(),
-            self.name().unwrap_or("").to_string(),
-        ]
-        .map(|name| Cow::Owned(name.to_string()))
-        .to_vec()
-    }
-
-    fn headers() -> Vec<Cow<'static, str>> {
-        ["Index", "Type", "Name"]
-            .map(|header| Cow::Owned(header.to_string()))
-            .to_vec()
     }
 }

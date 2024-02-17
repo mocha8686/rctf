@@ -3,12 +3,13 @@ use crate::{
     session::SessionSelection,
     ssh::{SshSession, SshSettings},
     terminal::{eprintln_colored, println},
-    util::base_table,
+    util::table_settings,
     Context,
 };
 use anyhow::Result;
 use clap::{arg, command, value_parser, Parser, Subcommand};
 use crossterm::style::Color;
+use tabled::Table;
 
 // TODO: https://docs.rs/clap/latest/clap/_cookbook/repl_derive/index.html
 #[derive(Debug, Parser)]
@@ -105,11 +106,19 @@ impl<'a> Context<'a> {
             self.resume_session(SessionSelection::Index(index)).await?;
         } else {
             if self.sessions.is_empty() {
-                eprintln_colored("There are currently no sessions.", Color::Red)?;
+                println("There are currently no sessions.")?;
             } else {
-                println(base_table(
-                    self.sessions.iter().flatten().map(|item| item.as_ref()),
-                ))?;
+                let mut table = Table::builder(
+                    self.sessions
+                        .iter()
+                        .flatten()
+                        .enumerate()
+                        .map(|(i, s)| (i, s.type_name(), s.name().unwrap_or(""))),
+                );
+                table.set_header(["index", "name", "type"]);
+
+                let table = table.build().with(table_settings()).to_string();
+                println(table)?;
             }
         }
 

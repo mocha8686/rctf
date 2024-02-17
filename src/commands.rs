@@ -1,7 +1,7 @@
 use anyhow::Result;
 use clap::{arg, command, Parser, Subcommand};
 use crossterm::{cursor, execute, style::Color, terminal::ClearType};
-use tabled::builder::Builder;
+use tabled::Table;
 
 use crate::{terminal::eprintln_colored, terminal::println, util::table_settings, Context};
 
