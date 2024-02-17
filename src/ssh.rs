@@ -17,7 +17,7 @@ use tokio::{
 use crate::session::{Session, SessionExit};
 
 mod handler;
-use handler::Handler;
+use self::handler::Handler;
 
 pub const ETX: u8 = 3;
 pub const EOT: u8 = 4;
@@ -66,7 +66,6 @@ pub struct SshSession {
     password: String,
     status: Status,
     name: String,
-    index: usize,
 }
 
 impl SshSession {
@@ -78,7 +77,6 @@ impl SshSession {
             password: settings.password,
             status: Status::Disconnected,
             name: String::new(),
-            index,
         }
     }
 
@@ -298,9 +296,5 @@ impl Session for SshSession {
 
     fn name_mut(&mut self) -> &mut String {
         &mut self.name
-    }
-
-    fn index(&self) -> usize {
-        self.index
     }
 }

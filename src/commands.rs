@@ -3,7 +3,7 @@ use clap::{arg, command, Parser, Subcommand};
 use crossterm::{cursor, execute, style::Color, terminal::ClearType};
 use tabled::builder::Builder;
 
-use crate::{terminal::eprintln_colored, terminal::println, util::base_table_settings, Context};
+use crate::{terminal::eprintln_colored, terminal::println, util::table_settings, Context};
 
 // TODO: https://docs.rs/clap/latest/clap/_cookbook/repl/index.html
 
@@ -32,7 +32,7 @@ pub enum Commands {
     },
 }
 
-impl Context {
+impl<'a> Context<'a> {
     pub async fn handle_command(&mut self, command: Commands) -> Result<()> {
         match command {
             Commands::Clear => execute!(
@@ -61,12 +61,11 @@ impl Context {
             if self.variables.is_empty() {
                 eprintln_colored("There are currently no variables.", Color::Red)?;
             } else {
-                let mut builder = Builder::default();
-                builder.set_header(["Name", "Value"]);
-                for (name, value) in &self.variables {
-                    builder.push_record([name, value]);
-                }
-                let table = builder.build().with(base_table_settings()).to_string();
+                let table = Table::builder(&self.variables);
+                // TODO: test
+                // builder.set_header(["name", "value"]);
+
+                let table = table.build().with(table_settings()).to_string();
                 println(table)?;
             }
         }

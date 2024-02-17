@@ -14,7 +14,7 @@ use futures::StreamExt;
 
 pub const MAX_HISTORY_SIZE: usize = 100;
 
-impl Context {
+impl<'a> Context<'a> {
     pub async fn get_next_command<P: Parser>(
         &self,
         prompt: &str,

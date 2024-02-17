@@ -4,16 +4,11 @@ use anyhow::{bail, Result};
 use async_trait::async_trait;
 use tabled::Tabled;
 
-use crate::{
-    ssh::{SshSession, SshSettings},
-    termcraft::TermcraftResponse,
-    terminal::println,
-    Context,
-};
 
-use self::stable_vec::StableVec;
+use crate::{termcraft::TermcraftResponse, terminal::println, Context};
 
 mod stable_vec;
+use self::stable_vec::StableVec;
 
 pub type SessionManager<'a> = StableVec<Box<dyn Session + 'a>>;
 
@@ -29,11 +24,6 @@ pub enum SessionSelection {
     Name(String),
 }
 
-#[derive(Debug, Clone)]
-pub(crate) enum SessionType {
-    Ssh(SshSettings),
-}
-
 #[async_trait]
 pub trait Session {
     fn type_name(&self) -> &'static str;
@@ -46,29 +36,19 @@ pub trait Session {
 
     fn name(&self) -> Option<&str>;
     fn name_mut(&mut self) -> &mut String;
-
-    fn index(&self) -> usize;
 }
 
-impl Context {
-        match session_type {
-            SessionType::Ssh(settings) => {
-                let session_index = self.sessions.next_index();
-                let mut session = SshSession::new(settings, session_index);
-                session.connect().await?;
+impl<'a> Context<'a> {
     pub async fn start_session<S: Session + 'a>(&mut self, mut session: S) -> Result<()> {
+        let session_index = self.sessions.next_index();
+        session.connect().await?;
 
-                self.sessions.push(Box::new(session));
-                self.handle_session(session_index).await?;
-            }
-        }
+        self.sessions.push(Box::new(session));
+        self.handle_session(session_index).await?;
 
         Ok(())
     }
 
-        &mut self,
-        session_selection: SessionSelection,
-    ) -> Result<()> {
     pub async fn resume_session(&mut self, session_selection: SessionSelection) -> Result<()> {
         let session_index = match session_selection {
             SessionSelection::Index(index) => index,
@@ -145,7 +125,6 @@ impl Context {
 
         Ok(())
     }
-}
 
 impl Tabled for &dyn Session {
     const LENGTH: usize = 3;

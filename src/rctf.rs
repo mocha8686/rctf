@@ -1,7 +1,7 @@
 use crate::{
-    session::{SessionSelection, SessionType},
-    ssh::SshSettings,
     commands::Commands,
+    session::SessionSelection,
+    ssh::{SshSession, SshSettings},
     terminal::{eprintln_colored, println},
     util::base_table,
     Context,
@@ -46,7 +46,7 @@ enum RctfCommands {
     Command(Commands),
 }
 
-impl Context {
+impl<'a> Context<'a> {
     pub async fn start_read_loop(&mut self) -> Result<()> {
         const PROMPT: &str = env!("CARGO_PKG_NAME");
 
@@ -70,15 +70,14 @@ impl Context {
                     password,
                     port,
                 } => {
-                    if let Err(e) = self
-                        .start_session(SessionType::Ssh(SshSettings {
-                            hostname,
-                            port,
-                            username,
-                            password: password.unwrap_or(String::new()),
-                        }))
-                        .await
-                    {
+                    let settings = SshSettings {
+                        hostname,
+                        port,
+                        username,
+                        password: password.unwrap_or(String::new()),
+                    };
+                    let ssh = SshSession::new(settings);
+                    if let Err(e) = self.start_session(ssh).await {
                         eprintln_colored(e, Color::Red)?;
                     }
                 }

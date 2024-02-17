@@ -15,16 +15,16 @@ pub(crate) mod util;
 
 pub type CommandHistory = VecDeque<String>;
 
-pub struct Context {
+pub struct Context<'a> {
     supports_keyboard_enhancement: bool,
-    sessions: SessionManager,
+    sessions: SessionManager<'a>,
     named_sessions: HashMap<String, usize>,
     variables: HashMap<String, String>,
     rctf_history: CommandHistory,
     termcraft_history: CommandHistory,
 }
 
-impl Context {
+impl<'a> Context<'a> {
     pub fn new(
         rctf_history: Option<CommandHistory>,
         termcraft_history: Option<CommandHistory>,

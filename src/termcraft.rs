@@ -53,7 +53,7 @@ enum TermcraftCommands {
     Command(Commands),
 }
 
-impl Context {
+impl<'a> Context<'a> {
     pub async fn start_termcraft(&mut self, session_index: usize) -> Result<TermcraftResponse> {
         const PROMPT: &str = "termcraft";
 
