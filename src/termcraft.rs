@@ -7,7 +7,7 @@ use anyhow::{bail, Result};
 use clap::{command, Parser, Subcommand};
 use crossterm::style::Color;
 
-pub(crate) enum TermcraftResponse {
+pub enum TermcraftResponse {
     Cmd(String),
     Background,
     Exit,
@@ -54,10 +54,7 @@ enum TermcraftCommand {
 }
 
 impl Context {
-    pub(crate) async fn start_termcraft(
-        &mut self,
-        session_index: usize,
-    ) -> Result<TermcraftResponse> {
+    pub async fn start_termcraft(&mut self, session_index: usize) -> Result<TermcraftResponse> {
         const PROMPT: &str = "termcraft";
 
         if self.sessions.get(session_index).is_none() {

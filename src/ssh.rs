@@ -24,11 +24,11 @@ pub const EOT: u8 = 4;
 pub const BACKSPACE: u8 = 8;
 
 #[derive(Debug, Clone)]
-pub(crate) struct SshSettings {
-    pub(crate) hostname: String,
-    pub(crate) port: u16,
-    pub(crate) username: String,
-    pub(crate) password: String,
+pub struct SshSettings {
+    pub hostname: String,
+    pub port: u16,
+    pub username: String,
+    pub password: String,
 }
 
 #[derive(Debug, Clone)]
@@ -59,7 +59,7 @@ impl Display for Exit {
     }
 }
 
-pub(crate) struct SshSession {
+pub struct SshSession {
     hostname: String,
     port: u16,
     username: String,
@@ -70,7 +70,7 @@ pub(crate) struct SshSession {
 }
 
 impl SshSession {
-    pub(crate) fn new(settings: SshSettings, index: usize) -> Self {
+    pub fn new(settings: SshSettings) -> Self {
         Self {
             hostname: settings.hostname,
             port: settings.port,

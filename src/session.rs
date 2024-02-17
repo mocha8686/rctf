@@ -15,16 +15,16 @@ use self::stable_vec::StableVec;
 
 mod stable_vec;
 
-pub(crate) type SessionManager = StableVec<Box<dyn Session>>;
+pub type SessionManager<'a> = StableVec<Box<dyn Session + 'a>>;
 
 #[derive(Debug, Clone)]
-pub(crate) enum SessionExit {
+pub enum SessionExit {
     Termcraft,
     Exit,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum SessionSelection {
+pub enum SessionSelection {
     Index(usize),
     Name(String),
 }
@@ -35,7 +35,7 @@ pub(crate) enum SessionType {
 }
 
 #[async_trait]
-pub(crate) trait Session {
+pub trait Session {
     fn type_name(&self) -> &'static str;
 
     async fn connect(&mut self) -> Result<()>;
@@ -51,12 +51,12 @@ pub(crate) trait Session {
 }
 
 impl Context {
-    pub(crate) async fn start_session(&mut self, session_type: SessionType) -> Result<()> {
         match session_type {
             SessionType::Ssh(settings) => {
                 let session_index = self.sessions.next_index();
                 let mut session = SshSession::new(settings, session_index);
                 session.connect().await?;
+    pub async fn start_session<S: Session + 'a>(&mut self, mut session: S) -> Result<()> {
 
                 self.sessions.push(Box::new(session));
                 self.handle_session(session_index).await?;
@@ -66,10 +66,10 @@ impl Context {
         Ok(())
     }
 
-    pub(crate) async fn resume_session(
         &mut self,
         session_selection: SessionSelection,
     ) -> Result<()> {
+    pub async fn resume_session(&mut self, session_selection: SessionSelection) -> Result<()> {
         let session_index = match session_selection {
             SessionSelection::Index(index) => index,
             SessionSelection::Name(name) => {

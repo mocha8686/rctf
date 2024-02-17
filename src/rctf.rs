@@ -47,7 +47,7 @@ enum RctfCommand {
 }
 
 impl Context {
-    pub(crate) async fn start_read_loop(&mut self) -> Result<()> {
+    pub async fn start_read_loop(&mut self) -> Result<()> {
         const PROMPT: &str = env!("CARGO_PKG_NAME");
 
         loop {

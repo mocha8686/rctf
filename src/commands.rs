@@ -9,13 +9,13 @@ use crate::{terminal::eprintln_colored, terminal::println, util::base_table_sett
 
 #[derive(Debug, Parser)]
 #[command()]
-pub(crate) struct Cli {
+pub struct Cli {
     #[command(subcommand)]
-    pub(crate) command: Command,
+    pub command: Commands,
 }
 
 #[derive(Debug, Subcommand)]
-pub(crate) enum Command {
+pub enum Commands {
     /// Clear the terminal
     Clear,
     /// Exit the program
@@ -33,7 +33,7 @@ pub(crate) enum Command {
 }
 
 impl Context {
-    pub(crate) async fn handle_command(&mut self, command: Command) -> Result<()> {
+    pub async fn handle_command(&mut self, command: Commands) -> Result<()> {
         match command {
             Command::Clear => execute!(
                 std::io::stdout(),

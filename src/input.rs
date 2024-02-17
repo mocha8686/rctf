@@ -26,7 +26,7 @@ lazy_static! {
 }
 
 impl Context {
-    pub(crate) async fn get_next_command<P: Parser>(
+    pub async fn get_next_command<P: Parser>(
         &self,
         prompt: &str,
         history: &mut CommandHistory,
@@ -69,8 +69,7 @@ impl Context {
         }
     }
 
-    pub(crate) fn expand(&self, input: &str) -> Result<String> {
-        // special chars.
+    pub fn parse_line(&self, input: &str) -> Result<String> {
         // `\n`        new line
         // `\r`        carriage return
         // `\t`        horizontal tab
