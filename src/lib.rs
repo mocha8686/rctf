@@ -4,7 +4,6 @@ use anyhow::Result;
 use session::SessionManager;
 
 pub(crate) mod commands;
-pub(crate) mod constants;
 pub mod files;
 pub(crate) mod input;
 pub mod rctf;

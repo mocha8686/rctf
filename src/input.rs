@@ -1,6 +1,6 @@
 use std::io::{self, Write};
 
-use crate::{constants::MAX_HISTORY_SIZE, terminal::println, CommandHistory, Context};
+use crate::{terminal::println, CommandHistory, Context};
 use anyhow::{bail, Result};
 use clap::Parser;
 use crossterm::{
@@ -13,6 +13,8 @@ use crossterm::{
 use futures::StreamExt;
 use lazy_static::lazy_static;
 use pcre2::bytes::Regex;
+
+pub const MAX_HISTORY_SIZE: usize = 100;
 
 lazy_static! {
     // https://regex101.com/r/BsuPom/1
@@ -87,7 +89,8 @@ impl Context {
         for res in VARIABLE_REGEX.captures_iter(special_chars.as_bytes()) {
             let cap = res?;
             let capture_match = cap.get(0).unwrap();
-            let variable_name = std::str::from_utf8(cap.get(1).unwrap_or_else(|| cap.get(2).unwrap()).as_bytes())?;
+            let variable_name =
+                std::str::from_utf8(cap.get(1).unwrap_or_else(|| cap.get(2).unwrap()).as_bytes())?;
             let Some(value) = self.variables.get(variable_name) else {
                 bail!(format!("Variable {variable_name} is not defined."));
             };

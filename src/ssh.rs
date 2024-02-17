@@ -1,6 +1,6 @@
 use std::{fmt::Display, sync::Arc};
 
-use anyhow::{bail, Result, anyhow};
+use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use futures::StreamExt;
@@ -14,14 +14,14 @@ use tokio::{
     sync::{mpsc, watch},
 };
 
-use crate::{
-    constants::{BACKSPACE, EOT, ETX},
-    session::{Session, SessionExit},
-};
+use crate::session::{Session, SessionExit};
 
 mod handler;
+use handler::Handler;
 
-use self::handler::Handler;
+pub const ETX: u8 = 3;
+pub const EOT: u8 = 4;
+pub const BACKSPACE: u8 = 8;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SshSettings {
