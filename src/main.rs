@@ -1,8 +1,8 @@
 use anyhow::Result;
 use rctf::{files::cache, Context};
 
-const RCTF_HISTORY_FILENAME: &str = "history";
-const TERMCRAFT_HISTORY_FILENAME: &str = "termcraft_history";
+const RCTF_HISTORY_FILENAME: &str = "rctf.history";
+const TERMCRAFT_HISTORY_FILENAME: &str = "termcraft.history";
 
 #[tokio::main]
 async fn main() -> Result<()> {
